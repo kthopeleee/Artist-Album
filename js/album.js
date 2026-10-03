@@ -16,11 +16,16 @@ export function normalize(a) {
   album.images = Array.isArray(album.images) ? album.images : [];
   for (const img of album.images) {
     img.comments = Array.isArray(img.comments) ? img.comments : [];
+    img.tags = Array.isArray(img.tags) ? img.tags : [];
     img.folder ??= null;
     img.title ??= '';
+    img.trashedAt ??= null;
   }
   return album;
 }
+
+// Tags are stored lowercase so "Sketch" and "sketch" are the same tag.
+export const normTag = s => String(s || '').toLowerCase().replace(/[,#]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40);
 
 export function uid(prefix) {
   const rand = Math.random().toString(36).slice(2, 8);
@@ -74,6 +79,25 @@ export const ops = {
   reorderImages: (ids, beforeId) => a => {
     a.images = moveBefore(a.images, ids, beforeId);
   },
+  // Trash keeps the files; only emptying the trash deletes them for good.
+  trashImages: ids => a => {
+    const at = now();
+    for (const img of a.images) if (ids.includes(img.id) && !img.trashedAt) img.trashedAt = at;
+  },
+  restoreImages: ids => a => {
+    for (const img of a.images) if (ids.includes(img.id)) img.trashedAt = null;
+  },
+  addTags: (ids, tags) => a => {
+    const clean = tags.map(normTag).filter(Boolean);
+    for (const img of a.images) {
+      if (!ids.includes(img.id)) continue;
+      img.tags ??= [];
+      for (const t of clean) if (!img.tags.includes(t)) img.tags.push(t);
+    }
+  },
+  removeTag: (ids, tag) => a => {
+    for (const img of a.images) if (ids.includes(img.id)) img.tags = (img.tags || []).filter(t => t !== tag);
+  },
   deleteImages: ids => (a, ctx) => {
     for (const img of a.images) {
       if (!ids.includes(img.id)) continue;
@@ -103,32 +127,48 @@ export const ops = {
 
 // ---- queries ---------------------------------------------------------------
 
-export function visibleImages(album, view, query = '') {
-  let list = album.images;
+// view: 'all' | 'unsorted' | 'trash' | folder id. tags: all must match.
+export function visibleImages(album, view, query = '', tags = []) {
+  let list = album.images.filter(i => (view === 'trash' ? !!i.trashedAt : !i.trashedAt));
   if (view === 'unsorted') list = list.filter(i => !i.folder || !album.folders.some(f => f.id === i.folder));
-  else if (view !== 'all') list = list.filter(i => i.folder === view);
+  else if (view !== 'all' && view !== 'trash') list = list.filter(i => i.folder === view);
+  if (tags.length) list = list.filter(i => tags.every(t => i.tags?.includes(t)));
   const q = query.trim().toLowerCase();
   if (q) {
     list = list.filter(i =>
       (i.title || '').toLowerCase().includes(q) ||
       (i.originalName || '').toLowerCase().includes(q) ||
+      i.tags?.some(t => t.includes(q)) ||
       i.comments.some(c => c.text.toLowerCase().includes(q) || (c.author || '').toLowerCase().includes(q)));
   }
   return list;
 }
 
 export function folderCounts(album) {
-  const counts = { all: album.images.length, unsorted: 0 };
+  const counts = { all: 0, unsorted: 0, trash: 0 };
   const ids = new Set(album.folders.map(f => f.id));
   for (const img of album.images) {
+    if (img.trashedAt) { counts.trash++; continue; }
+    counts.all++;
     if (img.folder && ids.has(img.folder)) counts[img.folder] = (counts[img.folder] || 0) + 1;
     else counts.unsorted++;
   }
   return counts;
 }
 
-export const totalBytes = album =>
-  album.images.reduce((sum, i) => sum + (i.bytes || 0) + (i.thumbBytes || 0), 0);
+// Every tag in use (outside the trash), most used first.
+export function allTags(album) {
+  const counts = new Map();
+  for (const img of album.images) {
+    if (img.trashedAt) continue;
+    for (const t of img.tags || []) counts.set(t, (counts.get(t) || 0) + 1);
+  }
+  return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+}
+
+const imageBytes = i => (i.bytes || 0) + (i.thumbBytes || 0);
+export const totalBytes = album => album.images.reduce((sum, i) => sum + imageBytes(i), 0);
+export const trashBytes = album => album.images.reduce((sum, i) => sum + (i.trashedAt ? imageBytes(i) : 0), 0);
 
 // Masonry: put each card in the currently shortest column.
 // heights: estimated card heights in order. Returns an array of index lists.

@@ -1,11 +1,15 @@
 import { CONFIG, resolveRepo } from './config.js';
-import { emptyAlbum, uid, imagePaths, ops, visibleImages, folderCounts, totalBytes, layoutColumns } from './album.js';
+import {
+  emptyAlbum, uid, imagePaths, ops, visibleImages, folderCounts, totalBytes, trashBytes, allTags, normTag, layoutColumns,
+} from './album.js';
 import { GitHubStore } from './github.js';
 import { processFile, isImageFile, formatBytes } from './images.js';
+import { SmartAI } from './smart.js';
 
 const $ = sel => document.querySelector(sel);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const icon = name => `<svg class="ic"><use href="#i-${name}"/></svg>`;
 
 const IMG_DRAG = 'application/x-album-images';
 const FOLDER_DRAG = 'application/x-album-folder';
@@ -14,7 +18,10 @@ const NEW_FOLDER = '~new';
 
 // ---- settings kept in this browser only -------------------------------------
 
-const KEYS = { token: 'artist-album.token', name: 'artist-album.name', login: 'artist-album.login' };
+const KEYS = {
+  token: 'artist-album.token', name: 'artist-album.name', login: 'artist-album.login',
+  dismissed: 'artist-album.ai-dismissed', promo: 'artist-album.ai-promo', collapsed: 'artist-album.ai-collapsed',
+};
 const prefs = {
   get: k => { try { return localStorage.getItem(KEYS[k]) || ''; } catch { return ''; } },
   set: (k, v) => { try { v ? localStorage.setItem(KEYS[k], v) : localStorage.removeItem(KEYS[k]); } catch {} },
@@ -31,44 +38,64 @@ const state = {
   server: emptyAlbum(), // last version confirmed by GitHub
   album: emptyAlbum(),  // server version + edits that are still saving
   loaded: false,
-  view: 'all',          // 'all' | 'unsorted' | folder id
+  view: 'all',          // 'all' | 'unsorted' | 'trash' | folder id
   query: '',
+  tags: [],             // active tag filters (all must match)
   limit: CONFIG.pageSize,
   selected: new Set(),
   selecting: false,
   lightbox: null,       // open image id
+  repoBytes: null,
 };
 
 const pending = [];          // edits not yet confirmed by GitHub, applied on top of state.server
-let saveChain = Promise.resolve();
+let chain = Promise.resolve();
 let saveGeneration = 0;      // bumps when a save lands, so older background refreshes are dropped
 let lastLoad = 0;
 const localUrls = new Map(); // image id -> { full, thumb } object URLs for photos uploaded in this tab
 
+// Suggestions the user said no to, as "imageId>target" (kept in this browser).
+const dismissed = new Set((() => { try { return JSON.parse(prefs.get('dismissed') || '[]'); } catch { return []; } })());
+const saveDismissed = () => prefs.set('dismissed', JSON.stringify([...dismissed].slice(-3000)));
+
+const smart = new SmartAI({
+  getThumb: img => fetchImageBlob(img, 'thumb'),
+  onChange: () => { renderSuggestions(); renderLightboxSmart(); renderSettingsAI(); },
+});
+
 const canEdit = () => !!gh.token;
-const isFolderView = v => v !== 'all' && v !== 'unsorted';
+const isFolderView = v => v !== 'all' && v !== 'unsorted' && v !== 'trash';
 const folderName = id => state.album.folders.find(f => f.id === id)?.name;
 const findImage = id => state.album.images.find(i => i.id === id);
-const currentList = () => visibleImages(state.album, state.view, state.query);
+const currentList = () => visibleImages(state.album, state.view, state.query, state.view === 'trash' ? [] : state.tags);
+const trashedIds = () => state.album.images.filter(i => i.trashedAt).map(i => i.id);
 
 // ---- syncing with GitHub ----------------------------------------------------
+
+// Runs GitHub writes one at a time, in order.
+function exclusive(fn) {
+  const result = chain.then(fn);
+  chain = result.catch(() => {});
+  return result;
+}
 
 function rebase() {
   const album = structuredClone(state.server);
   for (const p of pending) p.op(album, { remove: [] });
   state.album = album;
+  smart.sync(album);
   renderAll();
 }
 
 // Applies the change on screen immediately, then commits it to GitHub.
-// Saves run one at a time; each re-applies its op to the latest album.json.
+// Each save re-applies its op to the latest album.json, so edits never clash.
 function save(message, op, { files = [], onProgress } = {}) {
   if (!requireKey()) return Promise.resolve(false);
   const entry = { op };
   pending.push(entry);
   setStatus('saving');
   rebase();
-  const run = async () => {
+  return exclusive(async () => {
     setStatus('saving');
     let ok = false;
     try {
@@ -83,10 +110,7 @@ function save(message, op, { files = [], onProgress } = {}) {
     rebase();
     setStatus(pending.length ? 'saving' : ok ? 'saved' : 'error');
     return ok;
-  };
-  const result = saveChain.then(run);
-  saveChain = result.catch(() => {});
-  return result;
+  });
 }
 
 async function load() {
@@ -98,6 +122,14 @@ async function load() {
   lastLoad = Date.now();
   state.loaded = true;
   rebase();
+  loadRepoSize();
+}
+
+async function loadRepoSize() {
+  try {
+    state.repoBytes = await gh.repoSizeBytes();
+    renderSidebar();
+  } catch {}
 }
 
 async function refresh() {
@@ -120,6 +152,17 @@ function requireKey() {
   return false;
 }
 
+async function fetchImageBlob(img, kind) {
+  const path = imagePaths(img)[kind];
+  for (const url of [localUrls.get(img.id)?.[kind], path, gh.rawUrl(path)].filter(Boolean)) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) return await res.blob();
+    } catch {}
+  }
+  throw new Error('Image not found.');
+}
+
 // ---- rendering ----------------------------------------------------------------
 
 function renderAll() {
@@ -127,11 +170,14 @@ function renderAll() {
     state.view = 'all';
     history.replaceState(history.state, '', hashUrl());
   }
-  for (const id of state.selected) if (!findImage(id)) state.selected.delete(id);
+  for (const id of state.selected) if (!currentList().some(i => i.id === id)) state.selected.delete(id);
   document.body.classList.toggle('can-edit', canEdit());
   document.body.classList.toggle('selecting', canEdit() && (state.selecting || state.selected.size > 0));
   renderSidebar();
   renderHeader();
+  renderTagBar();
+  renderNotice();
+  renderSuggestions();
   renderGrid();
   renderSelection();
   renderLightbox();
@@ -161,13 +207,21 @@ function loadImage(img, kind) {
   });
 }
 
+function setMeter(meter, fill, label, used, limit, text) {
+  const ratio = used / limit;
+  $(fill).style.width = `${Math.min(100, ratio * 100).toFixed(1)}%`;
+  $(meter).classList.toggle('warn', ratio >= CONFIG.warnAt);
+  $(label).textContent = text;
+}
+
 const folderEls = new Map();
 function renderSidebar() {
   const counts = folderCounts(state.album);
   for (const btn of document.querySelectorAll('.nav > .nav-item')) {
     btn.classList.toggle('active', btn.dataset.view === state.view);
-    btn.querySelector('.count').textContent = state.loaded ? counts[btn.dataset.view] : '';
+    btn.querySelector('.count').textContent = state.loaded ? counts[btn.dataset.view] || (btn.dataset.view === 'trash' ? '' : 0) : '';
   }
+  $('#trashNav').hidden = !canEdit() && !counts.trash;
 
   const items = state.album.folders.map(f => {
     let li = folderEls.get(f.id);
@@ -182,7 +236,7 @@ function renderSidebar() {
     btn.querySelector('.name').textContent = f.name;
     btn.title = f.name;
     btn.querySelector('.count').textContent = counts[f.id] || 0;
-    const cover = state.album.images.find(i => i.folder === f.id);
+    const cover = state.album.images.find(i => i.folder === f.id && !i.trashedAt);
     const coverEl = btn.querySelector('.cover');
     const key = cover ? cover.id : '-';
     if (coverEl.dataset.key !== key) {
@@ -194,7 +248,7 @@ function renderSidebar() {
         setImgSrc(im, cover, 'thumb', () => {});
         coverEl.replaceChildren(im);
       } else {
-        coverEl.innerHTML = '<svg class="ic"><use href="#i-folder"/></svg>';
+        coverEl.innerHTML = icon('folder');
       }
     }
     return li;
@@ -204,24 +258,56 @@ function renderSidebar() {
   for (const id of folderEls.keys()) if (!state.album.folders.some(f => f.id === id)) folderEls.delete(id);
   $('#folderHint').hidden = !(state.loaded && canEdit() && !state.album.folders.length);
 
-  const used = totalBytes(state.album);
-  const warn = used > CONFIG.storageWarnBytes;
-  $('#storageFill').style.width = `${Math.min(100, (used / CONFIG.storageLimitBytes) * 100).toFixed(1)}%`;
-  $('#storage').classList.toggle('warn', warn);
-  $('#storageLabel').textContent = `${formatBytes(used)} of ~1 GB used${warn ? ' (getting full)' : ''}`;
+  const site = totalBytes(state.album);
+  const trash = trashBytes(state.album);
+  setMeter('#siteMeter', '#siteFill', '#siteLabel', site, CONFIG.siteLimitBytes, `${formatBytes(site)} / 1 GB`);
+  // GitHub's number lags behind; the repo is never smaller than the photos in it now.
+  const repoBytes = Math.max(state.repoBytes ?? 0, site);
+  setMeter('#repoMeter', '#repoFill', '#repoLabel', repoBytes, CONFIG.repoLimitBytes,
+    state.repoBytes === null ? '…' : `${formatBytes(repoBytes)} / 5 GB`);
+  $('#storageNote').textContent = trash ? `${formatBytes(trash)} is in the Trash. Empty it to free the space.` : '';
   $('#accessState').textContent = canEdit() ? `Editing as ${myName() || 'you'}` : 'View only. Click to unlock';
 }
 
 function renderHeader() {
-  const title = state.view === 'all' ? 'All photos' : state.view === 'unsorted' ? 'Unsorted' : folderName(state.view) || '';
+  const title = { all: 'All photos', unsorted: 'Unsorted', trash: 'Trash' }[state.view] || folderName(state.view) || '';
   $('#viewTitle').textContent = title;
   document.title = state.view === 'all' ? 'Artist Album' : `${title} · Artist Album`;
   $('#viewCount').textContent = state.loaded ? plural(currentList().length, 'photo') : '';
   const folderTools = isFolderView(state.view) && canEdit();
   $('#renameFolderBtn').hidden = !folderTools;
   $('#deleteFolderBtn').hidden = !folderTools;
+  $('#emptyTrashBtn').hidden = !(state.view === 'trash' && canEdit() && trashedIds().length);
   $('#selectBtn').hidden = !canEdit();
   $('#selectBtn').classList.toggle('on', state.selecting);
+}
+
+function renderTagBar() {
+  const bar = $('#tagBar');
+  const tags = allTags(state.album);
+  const show = state.loaded && state.view !== 'trash' && (tags.length || state.tags.length);
+  bar.hidden = !show;
+  if (!show) return;
+  const rest = tags.filter(([t]) => !state.tags.includes(t)).slice(0, 40);
+  const key = JSON.stringify([state.tags, rest]);
+  if (bar.dataset.key === key) return;
+  bar.dataset.key = key;
+  $('#tagChips').innerHTML =
+    state.tags.map(t => `<button class="chip active" data-tag="${esc(t)}" title="Stop filtering by ${esc(t)}">#${esc(t)}${icon('close')}</button>`).join('') +
+    (state.tags.length ? '<button class="chip link-chip" data-clear-tags>Clear</button>' : '') +
+    rest.map(([t, n]) => `<button class="chip" data-tag="${esc(t)}" title="Show photos tagged ${esc(t)}">#${esc(t)} <small>${n}</small></button>`).join('');
+}
+
+function renderNotice() {
+  const box = $('#notice');
+  const n = trashedIds().length;
+  const show = state.loaded && state.view === 'trash' && n > 0;
+  box.hidden = !show;
+  if (show) {
+    box.innerHTML = `Photos in the Trash still take up space (${esc(formatBytes(trashBytes(state.album)))}). ` +
+      '<b>Empty trash</b> deletes them for good and clears GitHub’s old version history, so the space is really freed. ' +
+      'Your other photos, folders, tags and comments are not affected.';
+  }
 }
 
 const cards = new Map();
@@ -232,7 +318,7 @@ function cardFor(img) {
     el.className = 'card';
     el.tabIndex = 0;
     el.dataset.id = img.id;
-    el.innerHTML = `<div class="card-media"><img alt="" loading="lazy" decoding="async" draggable="false"><button class="card-check" type="button" tabindex="-1" aria-label="Select photo"><svg class="ic"><use href="#i-check"/></svg></button></div><div class="card-caption"><span class="card-title"></span><span class="card-comments"><svg class="ic"><use href="#i-comment"/></svg><b></b></span></div>`;
+    el.innerHTML = `<div class="card-media"><img alt="" loading="lazy" decoding="async" draggable="false"><button class="card-check" type="button" tabindex="-1" aria-label="Select photo">${icon('check')}</button></div><div class="card-caption"><span class="card-title"></span><span class="card-comments">${icon('comment')}<b></b></span></div>`;
     const im = el.querySelector('img');
     im.addEventListener('load', () => im.classList.add('loaded'));
     setImgSrc(im, img, 'thumb');
@@ -295,16 +381,20 @@ function renderEmpty(list) {
   if (!state.loaded) {
     html = '<p>Loading album…</p>';
   } else if (!list.length) {
-    const addBtn = canEdit() ? '<button class="btn primary" data-action="add"><svg class="ic"><use href="#i-plus"/></svg>Add photos</button>' : '';
-    if (state.query) {
-      html = `<h2>No matches</h2><p>Nothing matches “${esc(state.query)}”.</p>`;
-    } else if (!state.album.images.length) {
-      html = `<svg class="ic xl"><use href="#i-image"/></svg><h2>${canEdit() ? 'Start your board' : 'No photos yet'}</h2>` +
+    const addBtn = canEdit() ? `<button class="btn primary" data-action="add">${icon('plus')}Add photos</button>` : '';
+    const live = state.album.images.filter(i => !i.trashedAt).length;
+    if (state.view === 'trash') {
+      html = `${icon('trash').replace('class="ic"', 'class="ic xl"')}<h2>The Trash is empty</h2><p>Deleted photos wait here, so you can restore them, until you empty the Trash.</p>`;
+    } else if (state.query || state.tags.length) {
+      const what = [state.query && `“${esc(state.query)}”`, ...state.tags.map(t => `#${esc(t)}`)].filter(Boolean).join(' + ');
+      html = `<h2>No matches</h2><p>Nothing here matches ${what}.</p>`;
+    } else if (!live) {
+      html = `${icon('image').replace('class="ic"', 'class="ic xl"')}<h2>${canEdit() ? 'Start your board' : 'No photos yet'}</h2>` +
         (canEdit()
           ? `<p>Drag images anywhere onto this page, paste them, or pick them from your computer. Big files are shrunk automatically.</p>${addBtn}`
           : '<p>Nothing has been added yet.</p>');
     } else if (isFolderView(state.view)) {
-      html = `<svg class="ic xl"><use href="#i-folder"/></svg><h2>This folder is empty</h2>` +
+      html = `${icon('folder').replace('class="ic"', 'class="ic xl"')}<h2>This folder is empty</h2>` +
         (canEdit() ? `<p>Drag photos onto it in the sidebar, or add new ones while it is open.</p>${addBtn}` : '<p>Nothing here yet.</p>');
     } else {
       html = '<h2>Nothing unsorted</h2><p>Every photo is in a folder.</p>';
@@ -331,12 +421,106 @@ function fillFolderSelect(sel, placeholder = '') {
 
 function renderSelection() {
   const n = state.selected.size;
+  const inTrash = state.view === 'trash';
   $('#selectionBar').hidden = !canEdit() || !(n || state.selecting);
   $('#selCount').textContent = n ? `${n} selected` : 'Tap photos to select';
   fillFolderSelect($('#selMove'), 'Move to…');
   $('#selMove').value = '';
-  $('#selMove').disabled = !n;
-  $('#selDelete').disabled = !n;
+  $('#selMove').hidden = inTrash;
+  $('#selTag').hidden = inTrash;
+  $('#selRestore').hidden = !inTrash;
+  $('#selDelete span').textContent = inTrash ? 'Delete forever' : 'Delete';
+  for (const b of ['#selMove', '#selTag', '#selRestore', '#selDelete']) $(b).disabled = !n;
+}
+
+// ---- smart suggestions ----------------------------------------------------------
+
+let lastGroups = new Map();
+function suggestionGroups() {
+  const groups = smart.folderSuggestions(state.album, dismissed)
+    .map(g => ({ ...g, ids: g.ids.filter(id => { const i = findImage(id); return i && !i.trashedAt && (!i.folder || !folderName(i.folder)); }) }))
+    .filter(g => g.ids.length && (!g.folderId || folderName(g.folderId)));
+  lastGroups = new Map(groups.map(g => [g.key, g]));
+  return groups;
+}
+
+function aiStatusText() {
+  if (smart.state === 'loading') return `Downloading the AI model… ${Math.round(smart.downloadProgress * 100)}% (one time, 23 MB)`;
+  if (smart.state === 'analyzing') return `Looking at your photos… ${smart.done} of ${smart.total}`;
+  if (smart.state === 'error') return smart.error;
+  return '';
+}
+
+function renderSuggestions() {
+  const panel = $('#suggestPanel');
+  const unsorted = folderCounts(state.album).unsorted;
+  const show = state.loaded && canEdit() && state.view === 'unsorted' && !state.query && !state.tags.length && unsorted > 0 &&
+    (smart.enabled || prefs.get('promo') !== 'hidden');
+  panel.hidden = !show;
+  if (!show) return;
+  panel.classList.toggle('collapsed', smart.enabled && prefs.get('collapsed') === '1');
+  $('#suggestStatus').textContent = aiStatusText();
+
+  let html;
+  if (!smart.enabled) {
+    html = `<div class="ai-promo"><span>Let AI suggest where your Unsorted photos belong, like “these look like Sketches” or “these look like manga pages”, plus tags for each photo. It runs privately on this device. The first time, it downloads a 23 MB model.</span>
+      <button class="btn primary sm" data-ai-on>Turn on</button><button class="btn ghost sm" data-ai-hide>Not now</button></div>`;
+  } else if (smart.state === 'loading') {
+    html = `<div class="ai-progress"><span style="width:${Math.round(smart.downloadProgress * 100)}%"></span></div>`;
+  } else if (smart.state === 'error') {
+    html = `<p>${esc(smart.error)} <button class="link" data-ai-retry>Try again</button></p>`;
+  } else if (smart.state === 'off') {
+    html = '';
+  } else {
+    const groups = suggestionGroups();
+    html = groups.map(g => {
+      const name = g.folderId ? folderName(g.folderId) : g.newName;
+      const text = g.reason === 'similar' ? `Looks like your <strong>${esc(name)}</strong> photos`
+        : g.reason === 'looks-like' ? `Looks like <strong>${esc(name)}</strong>`
+        : `These look like <strong>${esc(name)}</strong>. Make a new folder?`;
+      const action = g.folderId ? `Move ${g.ids.length} to ${esc(name)}` : `Create “${esc(name)}” and move ${g.ids.length}`;
+      const thumbs = g.ids.slice(0, 8).map(id => `<span class="sg-thumb" data-id="${esc(id)}"><img alt=""><button class="sg-x" data-exclude aria-label="Not this one" title="Not this one">${icon('close')}</button></span>`).join('');
+      const more = g.ids.length > 8 ? `<span class="sg-more">+${g.ids.length - 8}</span>` : '';
+      return `<div class="sg" data-key="${esc(g.key)}">
+        <div class="sg-text">${text} <span class="muted">· ${plural(g.ids.length, 'photo')}</span></div>
+        <div class="sg-thumbs">${thumbs}${more}</div>
+        <div class="sg-actions"><button class="btn primary sm" data-accept>${action}</button><button class="icon-btn sm" data-dismiss aria-label="Dismiss" title="Dismiss">${icon('close')}</button></div>
+      </div>`;
+    }).join('') || (smart.state === 'analyzing' ? '' : '<p>No suggestions right now. Sort a few photos into folders and the suggestions learn from what you do.</p>');
+  }
+  const body = $('#suggestBody');
+  if (body.dataset.html === html) return;
+  body.dataset.html = html;
+  body.innerHTML = html;
+  for (const t of body.querySelectorAll('.sg-thumb')) {
+    const img = findImage(t.dataset.id);
+    if (img) setImgSrc(t.querySelector('img'), img, 'thumb', () => {});
+  }
+}
+
+async function acceptSuggestion(group, ids = group.ids) {
+  if (group.folderId) return save(`Move ${plural(ids.length, 'photo')} to ${folderName(group.folderId)} (suggested)`, ops.moveImages(ids, group.folderId));
+  const existing = state.album.folders.find(f => f.name.toLowerCase() === group.newName.toLowerCase());
+  if (existing) return save(`Move ${plural(ids.length, 'photo')} to ${existing.name} (suggested)`, ops.moveImages(ids, existing.id));
+  const id = uid('f');
+  return save(`Create folder "${group.newName}" and move ${plural(ids.length, 'photo')} (suggested)`, a => {
+    ops.addFolder(id, group.newName)(a);
+    ops.moveImages(ids, id)(a);
+  });
+}
+
+function dismiss(key, ids) {
+  for (const id of ids) dismissed.add(`${id}>${key}`);
+  saveDismissed();
+  renderSuggestions();
+  renderLightboxSmart();
+}
+
+function renderSettingsAI() {
+  $('#aiToggle').textContent = smart.enabled ? 'Turn off' : 'Turn on';
+  $('#aiStatus').textContent = smart.enabled
+    ? aiStatusText() || (smart.active ? `On. ${plural(smart.emb.size, 'photo')} analyzed on this device.` : '')
+    : 'Off in this browser.';
 }
 
 // ---- lightbox ---------------------------------------------------------------
@@ -363,9 +547,14 @@ function renderLightbox() {
     editingComment = null;
     commentsKey = '';
     $('#commentText').value = '';
+    $('#tagInput').value = '';
     $('#lbPanel').scrollTop = 0;
     showLightboxImage(img);
   }
+  const trashed = !!img.trashedAt;
+  box.classList.toggle('trashed', trashed);
+  $('#lbTrashed').hidden = !trashed;
+  $('#lbDelete span').textContent = trashed ? 'Delete forever' : 'Delete';
 
   const list = currentList();
   const idx = list.findIndex(i => i.id === img.id);
@@ -374,7 +563,7 @@ function renderLightbox() {
   $('#lbPosition').textContent = idx >= 0 ? `${idx + 1} of ${list.length}` : '';
 
   const title = $('#lbTitle');
-  title.disabled = !canEdit();
+  title.disabled = !canEdit() || trashed;
   title.placeholder = canEdit() ? 'Add a title' : 'Untitled';
   if (document.activeElement !== title) title.value = img.title || '';
 
@@ -387,8 +576,63 @@ function renderLightbox() {
   folderSel.value = img.folder && folderName(img.folder) ? img.folder : UNSORTED;
   folderSel.disabled = !canEdit();
 
+  renderLightboxTags(img);
+  renderLightboxSmart();
   renderComments(img);
   $('#commentAs').textContent = myName() ? `Commenting as ${myName()}` : '';
+}
+
+function renderLightboxTags(img) {
+  const editable = canEdit() && !img.trashedAt;
+  const key = JSON.stringify([img.id, img.tags, editable]);
+  const box = $('#lbTags');
+  if (box.dataset.key !== key) {
+    box.dataset.key = key;
+    box.innerHTML = img.tags.map(t =>
+      `<span class="chip"><button class="chip-main" data-filter-tag="${esc(t)}" title="Show all photos tagged ${esc(t)}">#${esc(t)}</button>` +
+      (editable ? `<button class="chip-x" data-untag="${esc(t)}" aria-label="Remove tag ${esc(t)}" title="Remove tag">${icon('close')}</button>` : '') +
+      '</span>').join('') || (editable ? '' : '<span class="muted small">No tags</span>');
+  }
+  $('#tagInput').hidden = !editable;
+  const options = allTags(state.album).map(([t]) => t).filter(t => !img.tags.includes(t));
+  const listKey = options.join('|');
+  if ($('#tagList').dataset.key !== listKey) {
+    $('#tagList').dataset.key = listKey;
+    $('#tagList').innerHTML = options.map(t => `<option value="${esc(t)}">`).join('');
+  }
+}
+
+function renderLightboxSmart() {
+  const box = $('#lbSuggest');
+  const img = state.lightbox && findImage(state.lightbox);
+  let html = '';
+  if (img && !img.trashedAt && canEdit()) {
+    if (!smart.enabled) {
+      html = `<div class="sugg-row"><button class="link" data-ai-on>${icon('sparkle')} Suggest tags and folders with AI</button></div>`;
+    } else if (!smart.active) {
+      html = `<div class="sugg-row muted">${icon('sparkle')} ${esc(aiStatusText() || 'Starting the AI…')}</div>`;
+      if (smart.state === 'error') html += '<div class="sugg-row"><button class="link" data-ai-retry>Try again</button></div>';
+    } else if (!smart.emb.has(img.id)) {
+      html = `<div class="sugg-row muted">${icon('sparkle')} Looking at this photo…</div>`;
+    } else {
+      const unsorted = !img.folder || !folderName(img.folder);
+      const group = unsorted ? suggestionGroups().find(g => g.ids.includes(img.id)) : null;
+      if (group) {
+        const name = group.folderId ? folderName(group.folderId) : group.newName;
+        html += `<div class="sugg-row"><span class="sugg-label">${icon('sparkle')}Suggested folder</span>` +
+          `<button class="chip sugg from-similar" data-sfolder="${esc(group.key)}">${icon('folder')}${esc(name)}${group.folderId ? '' : ' (new)'}</button></div>`;
+      }
+      const tags = smart.tagSuggestions(img, state.album);
+      if (tags.length) {
+        html += `<div class="sugg-row"><span class="sugg-label">${icon('sparkle')}Suggested tags</span>` +
+          tags.map(t => `<button class="chip sugg${t.source === 'similar' ? ' from-similar' : ''}" data-stag="${esc(t.tag)}" title="${t.source === 'similar' ? 'You used this on similar photos' : 'AI guess'}">+ ${esc(t.tag)}</button>`).join('') +
+          '</div>';
+      }
+    }
+  }
+  if (box.dataset.html === html) return;
+  box.dataset.html = html;
+  box.innerHTML = html;
 }
 
 function showLightboxImage(img) {
@@ -423,7 +667,8 @@ function timeAgo(iso) {
 }
 
 function renderComments(img) {
-  const key = JSON.stringify([img.comments, editingComment, canEdit()]);
+  const editable = canEdit() && !img.trashedAt;
+  const key = JSON.stringify([img.comments, editingComment, editable]);
   if (key === commentsKey) return;
   commentsKey = key;
   $('#lbCount').textContent = img.comments.length ? `(${img.comments.length})` : '';
@@ -431,12 +676,12 @@ function renderComments(img) {
   const draft = ul.querySelector('.comment-edit textarea')?.value;
 
   if (!img.comments.length) {
-    ul.innerHTML = `<li class="none">${canEdit() ? 'No comments yet. Write the first one below.' : 'No comments yet.'}</li>`;
+    ul.innerHTML = `<li class="none">${editable ? 'No comments yet. Write the first one below.' : 'No comments yet.'}</li>`;
     return;
   }
   ul.innerHTML = img.comments.map(c => {
     const editing = editingComment === c.id;
-    const tools = canEdit() && !editing
+    const tools = editable && !editing
       ? '<span class="comment-tools"><button type="button" data-act="edit">Edit</button><button type="button" data-act="delete">Delete</button></span>'
       : '';
     const body = editing
@@ -459,9 +704,12 @@ function renderComments(img) {
   }
 }
 
+// ---- navigation (URL hash keeps the folder, tag filters and open photo) -------
+
 function hashUrl() {
   const p = new URLSearchParams();
   if (state.view !== 'all') p.set('view', state.view);
+  if (state.tags.length) p.set('tags', state.tags.join(','));
   if (state.lightbox) p.set('img', state.lightbox);
   const s = p.toString();
   return location.pathname + location.search + (s ? `#${s}` : '');
@@ -469,7 +717,12 @@ function hashUrl() {
 
 function readHash() {
   const p = new URLSearchParams(location.hash.slice(1));
-  return { view: p.get('view') || 'all', img: p.get('img'), key: p.get('key') };
+  return {
+    view: p.get('view') || 'all',
+    img: p.get('img'),
+    key: p.get('key'),
+    tags: (p.get('tags') || '').split(',').map(normTag).filter(Boolean),
+  };
 }
 
 function openLightbox(id) {
@@ -506,6 +759,35 @@ function setView(view) {
   renderAll();
 }
 
+function setTags(tags) {
+  state.tags = [...new Set(tags)];
+  state.limit = CONFIG.pageSize;
+  history.replaceState(history.state, '', hashUrl());
+  window.scrollTo(0, 0);
+  renderAll();
+}
+
+// Clicking a tag on a photo shows every photo with that tag.
+let afterBack = null;
+function filterByTag(tag) {
+  const apply = () => {
+    state.view = 'all';
+    state.tags = [tag];
+    state.limit = CONFIG.pageSize;
+    state.selected.clear();
+    history.replaceState(history.state, '', hashUrl());
+    window.scrollTo(0, 0);
+    renderAll();
+  };
+  if (history.state?.lb) {
+    afterBack = apply; // close the lightbox via Back first, then filter
+    history.back();
+  } else {
+    state.lightbox = null;
+    apply();
+  }
+}
+
 function siteUrl() {
   if (location.hostname.endsWith('.github.io')) return location.origin + location.pathname.replace(/index\.html$/, '');
   return `https://${repo.owner.toLowerCase()}.github.io/${repo.repo}/`;
@@ -525,6 +807,7 @@ async function addFiles(fileList, folderOverride) {
   const panel = uploadPanel(files);
   const records = [];
   const blobs = [];
+  const thumbs = new Map();
 
   for (const [i, file] of files.entries()) {
     panel.update(i, 'Shrinking…');
@@ -534,11 +817,12 @@ async function addFiles(fileList, folderOverride) {
         id: uid('i'), folder, title: '', w: out.w, h: out.h,
         bytes: out.full.size, thumbBytes: out.thumb.size, ext: out.ext, thumbExt: out.thumbExt,
         originalName: file.name || 'Pasted image', addedAt: new Date().toISOString(), addedBy: myName(),
-        comments: [],
+        tags: [], comments: [], trashedAt: null,
       };
       const paths = imagePaths(rec);
       blobs.push({ path: paths.full, blob: out.full }, { path: paths.thumb, blob: out.thumb });
       localUrls.set(rec.id, { full: URL.createObjectURL(out.full), thumb: URL.createObjectURL(out.thumb) });
+      thumbs.set(rec.id, out.thumb);
       records.push(rec);
       panel.update(i, out.full === file ? formatBytes(file.size) : `${formatBytes(file.size)} → ${formatBytes(out.full.size)}`, 'ok');
     } catch (e) {
@@ -552,13 +836,15 @@ async function addFiles(fileList, folderOverride) {
   }
 
   panel.title(`Uploading ${plural(records.length, 'photo')}…`);
-  const ok = await save(`Add ${plural(records.length, 'photo')}`, ops.addImages(records), {
+  const saving = save(`Add ${plural(records.length, 'photo')}`, ops.addImages(records), {
     files: blobs,
     onProgress: (done, total) => {
       panel.progress(0.3 + (0.65 * done) / Math.max(1, total));
       panel.title(done < total ? `Uploading ${Math.min(records.length, Math.floor(done / 2) + 1)} of ${records.length}…` : 'Saving…');
     },
   });
+  for (const [id, blob] of thumbs) smart.add(id, blob); // suggestions are ready by the time it's uploaded
+  const ok = await saving;
   panel.finish(ok ? `Added ${plural(records.length, 'photo')}` : 'Upload failed', !ok || records.length < files.length);
 }
 
@@ -611,15 +897,63 @@ async function moveTo(ids, value) {
   return save(`Move ${plural(ids.length, 'photo')} to ${folder ? folderName(folder) : 'Unsorted'}`, ops.moveImages(ids, folder));
 }
 
-async function deleteImages(ids) {
+// Delete = move to the Trash (can be undone).
+function trashImages(ids) {
+  if (!ids.length) return;
+  save(`Move ${plural(ids.length, 'photo')} to the Trash`, ops.trashImages(ids));
+  toast(`Moved ${plural(ids.length, 'photo')} to the Trash`, '', {
+    label: 'Undo',
+    fn: () => save(`Restore ${plural(ids.length, 'photo')}`, ops.restoreImages(ids)),
+  });
+}
+
+function restoreImages(ids) {
+  if (!ids.length) return;
+  save(`Restore ${plural(ids.length, 'photo')} from the Trash`, ops.restoreImages(ids));
+  toast(`Restored ${plural(ids.length, 'photo')}`);
+}
+
+// Delete for good AND free the space: remove the files, then replace GitHub's
+// history with a single snapshot so the old copies stop counting.
+async function purge(ids) {
+  const imgs = ids.map(findImage).filter(Boolean);
+  if (!imgs.length || !requireKey()) return false;
+  const bytes = imgs.reduce((s, i) => s + (i.bytes || 0) + (i.thumbBytes || 0), 0);
+  const all = imgs.length === trashedIds().length;
   const ok = await ask({
-    title: `Delete ${plural(ids.length, 'photo')}?`,
-    text: 'They will be removed from the album for everyone.',
-    input: false, ok: 'Delete', danger: true,
+    title: all ? 'Empty the Trash?' : `Delete ${plural(imgs.length, 'photo')} forever?`,
+    text: `${plural(imgs.length, 'photo')} (${formatBytes(bytes)}) will be deleted for good. To actually free the space, GitHub’s old version history is cleared too. Your other photos, folders, tags and comments all stay. This can’t be undone.`,
+    input: false, ok: 'Delete and free space', danger: true,
   });
   if (!ok) return false;
-  save(`Delete ${plural(ids.length, 'photo')}`, ops.deleteImages(ids));
+  const deleted = await save(`Delete ${plural(imgs.length, 'photo')} from the Trash`, ops.deleteImages(imgs.map(i => i.id)));
+  if (!deleted) return false;
+  await exclusive(async () => {
+    setStatus('saving', 'Freeing up space…');
+    try {
+      await gh.compactHistory('Album snapshot: cleared old history to free up space');
+      setStatus('saved');
+      toast('Deleted for good. GitHub releases the space during its regular cleanup, so the repo meter can take a while to go down.');
+    } catch (e) {
+      setStatus('error');
+      toast(`The photos were deleted, but clearing the old history failed: ${e.message}`, 'error');
+    }
+  });
+  loadRepoSize();
   return true;
+}
+
+async function deleteSelected() {
+  const ids = currentList().filter(i => state.selected.has(i.id)).map(i => i.id);
+  if (!ids.length) return;
+  if (state.view === 'trash') {
+    if (!(await purge(ids))) return;
+  } else {
+    trashImages(ids);
+  }
+  state.selected.clear();
+  state.selecting = false;
+  renderAll();
 }
 
 function askFolderName(title, value = '') {
@@ -635,22 +969,23 @@ async function newFolder() {
   setView(id);
 }
 
+function addTags(ids, raw) {
+  const tags = String(raw).split(',').map(normTag).filter(Boolean);
+  if (!tags.length || !ids.length) return;
+  save(`Tag ${plural(ids.length, 'photo')}: ${tags.join(', ')}`, ops.addTags(ids, tags));
+}
+
 async function download(img) {
   const base = (img.title || (img.originalName || '').replace(/\.[^.]+$/, '') || img.id).replace(/[\\/:*?"<>|]+/g, '_');
-  const path = imagePaths(img).full;
-  for (const url of [localUrls.get(img.id)?.full, path, gh.rawUrl(path)].filter(Boolean)) {
-    try {
-      const res = await fetch(url);
-      if (!res.ok) continue;
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(await res.blob());
-      a.download = `${base}.${img.ext}`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
-      return;
-    } catch {}
+  try {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(await fetchImageBlob(img, 'full'));
+    a.download = `${base}.${img.ext}`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+  } catch {
+    toast('Download failed.', 'error');
   }
-  toast('Download failed.', 'error');
 }
 
 async function copyText(text) {
@@ -667,20 +1002,25 @@ async function copyText(text) {
 
 // ---- small UI helpers ---------------------------------------------------------
 
-function toast(msg, type = '') {
+function toast(msg, type = '', action) {
   const el = document.createElement('div');
   el.className = `toast ${type}`;
   el.textContent = msg;
+  if (action) {
+    const btn = Object.assign(document.createElement('button'), { className: 'toast-action', textContent: action.label });
+    btn.onclick = () => { el.remove(); action.fn(); };
+    el.append(btn);
+  }
   $('#toasts').append(el);
-  setTimeout(() => el.remove(), type === 'error' ? 8000 : 3500);
+  setTimeout(() => el.remove(), type === 'error' ? 8000 : action ? 7000 : 3500);
 }
 
 let statusTimer;
-function setStatus(s) {
+function setStatus(s, text) {
   const el = $('#saveStatus');
   clearTimeout(statusTimer);
   el.dataset.state = s;
-  el.textContent = { saving: 'Saving…', retrying: 'Merging with another edit…', saved: 'Saved', error: 'Not saved' }[s] || '';
+  el.textContent = text || { saving: 'Saving…', retrying: 'Merging with another edit…', saved: 'Saved', error: 'Not saved' }[s] || '';
   if (s === 'saved') statusTimer = setTimeout(() => { el.textContent = ''; el.dataset.state = ''; }, 2500);
 }
 
@@ -725,6 +1065,7 @@ function openSettings(msg = '') {
     : 'This browser can only view the album.';
   $('#forgetKey').hidden = !canEdit();
   $('#copyInvite').disabled = !canEdit();
+  renderSettingsAI();
   setSettingsMsg(msg);
   if (!d.open) d.showModal();
 }
@@ -786,7 +1127,7 @@ function bindGrid() {
   });
   grid.addEventListener('dragend', clearDragMarks);
   grid.addEventListener('dragover', e => {
-    if (!dragHas(e, IMG_DRAG)) return;
+    if (!dragHas(e, IMG_DRAG) || state.view === 'trash') return;
     const card = e.target.closest('.card');
     if (!card || dragIds.includes(card.dataset.id)) return;
     e.preventDefault();
@@ -796,7 +1137,7 @@ function bindGrid() {
     markOnly(before ? null : card, 'drop-after');
   });
   grid.addEventListener('drop', e => {
-    if (!dragHas(e, IMG_DRAG)) return;
+    if (!dragHas(e, IMG_DRAG) || state.view === 'trash') return;
     const card = e.target.closest('.card');
     if (!card || dragIds.includes(card.dataset.id)) return;
     e.preventDefault();
@@ -847,9 +1188,14 @@ function bindSidebar() {
       if (!item || item.dataset.view === 'all') return;
       e.preventDefault();
       const ids = dragIds;
+      const target = item.dataset.view;
       clearDragMarks();
       state.selected.clear();
-      moveTo(ids, item.dataset.view === 'unsorted' ? UNSORTED : item.dataset.view);
+      if (target === 'trash') trashImages(ids);
+      else {
+        if (state.view === 'trash') save(`Restore ${plural(ids.length, 'photo')}`, ops.restoreImages(ids));
+        moveTo(ids, target === 'unsorted' ? UNSORTED : target);
+      }
     } else if (dragHas(e, FOLDER_DRAG) && e.target.closest('#folderList')) {
       e.preventDefault();
       const id = dragFolder;
@@ -872,7 +1218,7 @@ function bindFileDrop() {
   const overlay = $('#dropOverlay');
   const targetFolder = e => {
     const item = e.target.closest?.('.nav-item');
-    if (!item || item.dataset.view === 'all') return undefined;
+    if (!item || item.dataset.view === 'all' || item.dataset.view === 'trash') return undefined;
     return item.dataset.view === 'unsorted' ? null : item.dataset.view;
   };
   const hide = () => { depth = 0; overlay.hidden = true; markOnly(null, 'drop-target'); };
@@ -913,7 +1259,7 @@ function bindFileDrop() {
   });
 }
 
-function bindHeader() {
+function bindBoard() {
   const pick = () => { if (requireKey()) $('#fileInput').click(); };
   $('#addBtn').addEventListener('click', pick);
   $('#empty').addEventListener('click', e => { if (e.target.closest('[data-action="add"]')) pick(); });
@@ -948,23 +1294,60 @@ function bindHeader() {
     save(`Delete folder "${folderName(id)}"`, ops.deleteFolder(id));
     setView('all');
   });
+  $('#emptyTrashBtn').addEventListener('click', () => purge(trashedIds()));
+
+  $('#tagChips').addEventListener('click', e => {
+    if (e.target.closest('[data-clear-tags]')) return setTags([]);
+    const chip = e.target.closest('[data-tag]');
+    if (!chip) return;
+    const t = chip.dataset.tag;
+    setTags(state.tags.includes(t) ? state.tags.filter(x => x !== t) : [...state.tags, t]);
+  });
+
+  $('#suggestPanel').addEventListener('click', e => {
+    if (e.target.closest('[data-ai-on]')) return smart.enable(state.album);
+    if (e.target.closest('[data-ai-retry]')) return smart.start(state.album);
+    if (e.target.closest('[data-ai-hide]')) { prefs.set('promo', 'hidden'); return renderSuggestions(); }
+    if (e.target.closest('[data-ai-collapse]')) {
+      if (!smart.enabled) { prefs.set('promo', 'hidden'); return renderSuggestions(); }
+      prefs.set('collapsed', prefs.get('collapsed') === '1' ? '' : '1');
+      return renderSuggestions();
+    }
+    if (e.target.closest('.suggest-head')) {
+      if (prefs.get('collapsed') === '1') { prefs.set('collapsed', ''); renderSuggestions(); }
+      return;
+    }
+    const row = e.target.closest('.sg');
+    const group = row && lastGroups.get(row.dataset.key);
+    if (!group) return;
+    const thumb = e.target.closest('.sg-thumb');
+    if (e.target.closest('[data-exclude]')) dismiss(group.key, [thumb.dataset.id]);
+    else if (thumb) openLightbox(thumb.dataset.id);
+    else if (e.target.closest('[data-accept]')) acceptSuggestion(group);
+    else if (e.target.closest('[data-dismiss]')) dismiss(group.key, group.ids);
+  });
 
   $('#selMove').addEventListener('change', async e => {
     const value = e.target.value;
     e.target.value = '';
-    const ids = state.album.images.filter(i => state.selected.has(i.id)).map(i => i.id);
+    const ids = currentList().filter(i => state.selected.has(i.id)).map(i => i.id);
     state.selected.clear();
     state.selecting = false;
     await moveTo(ids, value);
     renderAll();
   });
-  $('#selDelete').addEventListener('click', async () => {
-    if (await deleteImages([...state.selected])) {
-      state.selected.clear();
-      state.selecting = false;
-      renderAll();
-    }
+  $('#selTag').addEventListener('click', async () => {
+    const ids = currentList().filter(i => state.selected.has(i.id)).map(i => i.id);
+    const tag = await ask({ title: `Tag ${plural(ids.length, 'photo')}`, text: 'Separate several tags with commas.', placeholder: 'e.g. sketch, character', ok: 'Add tag' });
+    if (tag) addTags(ids, tag);
   });
+  $('#selRestore').addEventListener('click', () => {
+    restoreImages(currentList().filter(i => state.selected.has(i.id)).map(i => i.id));
+    state.selected.clear();
+    state.selecting = false;
+    renderAll();
+  });
+  $('#selDelete').addEventListener('click', deleteSelected);
   $('#selClear').addEventListener('click', () => {
     state.selected.clear();
     state.selecting = false;
@@ -1006,22 +1389,54 @@ function bindLightbox() {
     await copyText(`${siteUrl()}#img=${encodeURIComponent(state.lightbox)}`);
     toast('Link to this photo copied.');
   });
+  $('#lbRestore').addEventListener('click', () => restoreImages([state.lightbox]));
   $('#lbDelete').addEventListener('click', async () => {
     const id = state.lightbox;
+    const img = findImage(id);
+    if (!img) return;
+    if (img.trashedAt) {
+      if (await purge([id])) closeLightbox();
+      return;
+    }
     const list = currentList();
     const idx = list.findIndex(i => i.id === id);
     const neighbour = list[idx + 1] || list[idx - 1];
-    const ok = await ask({ title: 'Delete this photo?', text: 'It will be removed from the album for everyone.', input: false, ok: 'Delete', danger: true });
-    if (!ok) return;
     if (neighbour) {
       state.lightbox = neighbour.id;
       history.replaceState(history.state, '', hashUrl());
     } else {
       closeLightbox();
     }
-    save('Delete a photo', ops.deleteImages([id]));
+    trashImages([id]);
   });
 
+  // Tags
+  const tagInput = $('#tagInput');
+  const commitTagInput = () => {
+    if (tagInput.value.trim() && state.lightbox) addTags([state.lightbox], tagInput.value);
+    tagInput.value = '';
+  };
+  tagInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commitTagInput(); }
+  });
+  tagInput.addEventListener('change', commitTagInput);
+  $('#lbTags').addEventListener('click', e => {
+    const untag = e.target.closest('[data-untag]');
+    if (untag) return save(`Remove tag "${untag.dataset.untag}"`, ops.removeTag([state.lightbox], untag.dataset.untag));
+    const filter = e.target.closest('[data-filter-tag]');
+    if (filter) filterByTag(filter.dataset.filterTag);
+  });
+  $('#lbSuggest').addEventListener('click', e => {
+    if (e.target.closest('[data-ai-on]')) return smart.enable(state.album);
+    if (e.target.closest('[data-ai-retry]')) return smart.start(state.album);
+    const stag = e.target.closest('[data-stag]');
+    if (stag) return addTags([state.lightbox], stag.dataset.stag);
+    const sfolder = e.target.closest('[data-sfolder]');
+    const group = sfolder && lastGroups.get(sfolder.dataset.sfolder);
+    if (group) acceptSuggestion(group, [state.lightbox]);
+  });
+
+  // Comments
   $('#commentForm').addEventListener('submit', async e => {
     e.preventDefault();
     const text = $('#commentText').value.trim();
@@ -1098,6 +1513,7 @@ function bindSettings() {
       prefs.set('login', login);
       setSettingsMsg('Key saved. Editing is unlocked.', 'ok');
       commentsKey = '';
+      if (smart.enabled) smart.start(state.album);
       renderAll();
       setTimeout(() => $('#settings').close(), 800);
     } catch (e) {
@@ -1117,6 +1533,11 @@ function bindSettings() {
   $('#copyInvite').addEventListener('click', async () => {
     await copyText(`${siteUrl()}#key=${encodeURIComponent(gh.token)}`);
     setSettingsMsg('Invite link copied. Anyone who opens it can edit, so share it carefully.', 'ok');
+  });
+  $('#aiToggle').addEventListener('click', () => {
+    if (smart.enabled) smart.disable();
+    else smart.enable(state.album);
+    renderAll();
   });
   $('#askCancel').addEventListener('click', () => $('#askDialog').close());
 }
@@ -1142,15 +1563,26 @@ function bindGlobal() {
       state.selected.clear();
       state.selecting = false;
       renderAll();
+    } else if ((e.key === 'Delete' || e.key === 'Backspace') && state.selected.size && canEdit()) {
+      e.preventDefault();
+      deleteSelected();
     } else if (e.key === '/') {
       e.preventDefault();
       $('#search').focus();
     }
   });
 
+  // Back/forward, a closed lightbox, or a link pasted into the address bar.
   window.addEventListener('popstate', () => {
     const h = readHash();
+    if (afterBack) {
+      const apply = afterBack;
+      afterBack = null;
+      state.lightbox = null;
+      return apply();
+    }
     if (h.view !== state.view) { state.view = h.view; state.limit = CONFIG.pageSize; }
+    state.tags = h.tags;
     state.lightbox = h.img;
     renderAll();
   });
@@ -1180,13 +1612,14 @@ function init() {
     prefs.set('token', h.key);
   }
   state.view = h.view;
+  state.tags = h.tags;
   state.lightbox = h.img;
   history.replaceState(null, '', hashUrl()); // also strips #key= from the address bar
 
   bindGrid();
   bindSidebar();
   bindFileDrop();
-  bindHeader();
+  bindBoard();
   bindLightbox();
   bindSettings();
   bindGlobal();
@@ -1197,6 +1630,7 @@ function init() {
       state.lightbox = null;
       history.replaceState(null, '', hashUrl());
     }
+    if (smart.enabled && canEdit()) smart.start(state.album);
     if (h.key) {
       gh.verify()
         .then(({ login }) => {

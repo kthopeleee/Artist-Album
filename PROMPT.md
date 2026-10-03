@@ -21,7 +21,7 @@ Build a personal, Pinterest-style image board as a **static site on GitHub Pages
 3. **Move and reorder photos.**
    - Drag a photo card onto a sidebar folder to move it.
    - Drag a card onto another card to reorder: the left half of the target means "before", the right half means "after". Show an accent bar on that side while dragging.
-   - A "Select" mode and modifier-clicks select several cards. A floating bar offers "Move to…" (which includes "+ New folder…"), "Delete" and "Done".
+   - A "Select" mode and modifier-clicks select several cards. A floating bar offers "Move to…" (which includes "+ New folder…"), "Tag", "Delete" and "Done".
    - Phones can't drag, so moving must also work through the "Move to" menus.
 4. **Masonry board.**
    - Pinterest-like columns: 2 on phones, up to 6 on wide screens.
@@ -35,14 +35,21 @@ Build a personal, Pinterest-style image board as a **static site on GitHub Pages
      - An editable title.
      - "Added <date> by <name> · W×H · size" and the original file name.
      - A folder dropdown.
+     - Tag chips. Clicking a tag's name closes the lightbox and filters the board to that tag; its × removes the tag. A "+ Add a tag" input autocompletes existing tags from a `<datalist>`, and Enter or a comma adds the tag.
+     - Smart suggestions (see below): a "Suggested folder" chip for Unsorted photos and "Suggested tags" chips.
      - Download, Copy link (deep link `#img=<id>`) and Delete buttons.
      - A **comment thread**: avatar initial, author, relative time, "edited" marker. Every comment has Edit and Delete for anyone with edit access.
      - An "Add a comment" box; Cmd/Ctrl+Enter posts it.
    - Arrow keys and swipe go to the previous or next photo. Esc closes. Clicking the backdrop closes.
    - The browser Back button closes the lightbox: push a history entry on open.
    - Show the blurred thumbnail first, then swap in the full image when it loads. Preload the next photo.
-6. **Search** box that filters by title, comment text, comment author and original file name.
-7. **Deep links:** the URL hash keeps the current folder (`#view=<folderId>`) and the open photo (`img=<id>`).
+6. **Search** box that filters by title, tags, comment text, comment author and original file name.
+7. **Tags.**
+   - Stored lowercase, trimmed, with no commas or `#`, and at most 40 characters.
+   - A tag bar above the board shows every tag with its count. Clicking chips filters the board; several tags combine with AND.
+   - Tag filters apply in every view except the Trash.
+8. **Trash.** See "Trash and freeing space" below.
+9. **Deep links:** the URL hash keeps the current view (`#view=<folderId|unsorted|trash>`), tag filters (`tags=a,b`) and the open photo (`img=<id>`). Handle `popstate` for Back and for pasted links.
 
 ## Access model
 - **Anyone with the link can view.**
@@ -69,6 +76,7 @@ Build a personal, Pinterest-style image board as a **static site on GitHub Pages
   "images": [{ "id": "i_…", "folder": "f_… or null", "title": "", "w": 2400, "h": 1600,
                "bytes": 412345, "thumbBytes": 52000, "ext": "webp", "thumbExt": "webp",
                "originalName": "IMG_1.HEIC", "addedAt": "ISO", "addedBy": "Katie",
+               "tags": ["manga", "ink"], "trashedAt": null,
                "comments": [{ "id": "c_…", "author": "Katie", "text": "…", "at": "ISO", "editedAt": null }] }] }
 ```
 - The order of `images` is the display order; new uploads go to the front.
@@ -96,7 +104,7 @@ To make step 7 work, **write every change as a pure "op" function** `(album, ctx
 - It is safe to re-apply: look things up by id, skip anything missing, and never add a duplicate id.
 - Ops that delete images push their file paths onto `ctx.remove`.
 
-Ops needed: `addFolder`, `renameFolder`, `deleteFolder`, `moveFolder`, `addImages`, `moveImages`, `reorderImages`, `deleteImages`, `setTitle`, `addComment`, `editComment`, `deleteComment`.
+Ops needed: `addFolder`, `renameFolder`, `deleteFolder`, `moveFolder`, `addImages`, `moveImages`, `reorderImages`, `trashImages`, `restoreImages`, `deleteImages`, `setTitle`, `addTags`, `removeTag`, `addComment`, `editComment`, `deleteComment`.
 
 **UI state:**
 - Keep `server` (the last album confirmed by GitHub) and a `pending` list of ops.
@@ -121,8 +129,72 @@ Ops needed: `addFolder`, `renameFolder`, `deleteFolder`, `moveFolder`, `addImage
 | 403 rate limit | Wait a little and try again. |
 | 404 | The repo was not found. |
 
+## Trash and freeing space
+Git keeps every old version of every file, so deleting a file, or a whole folder on GitHub's website, **never shrinks a repo**. Handle this with a Trash and a real "free up space" step.
+
+- **Delete moves photos to the Trash:** it sets `trashedAt`, and the files stay where they are.
+  - There is no confirmation; instead, show a toast with **Undo**.
+  - Trashed photos are hidden from every view, count and tag list, except the **Trash** view, which sits in the sidebar under the folders.
+  - Dropping cards on the Trash in the sidebar trashes them.
+  - Inside the Trash, a photo shows a "Restore" button and "Delete forever".
+- **Empty trash** (a button in the Trash view's header), or "Delete forever" on selected photos:
+  1. Confirm, stating how many photos and bytes, and that GitHub's old version history is cleared too. The other photos, folders, tags and comments stay; it can't be undone.
+  2. Commit `deleteImages` for those ids. This removes their files.
+  3. Then **compact history**, inside the same one-at-a-time save chain:
+     1. `GET` the head commit and its tree.
+     2. `POST /git/commits` with that tree and `parents: []`, which makes a snapshot with no history.
+     3. `GET` the head again; if it moved, someone saved meanwhile, so start over.
+     4. `PATCH /git/refs/heads/main` with `force: true`.
+
+  The old versions become unreferenced, and GitHub frees them during its regular cleanup.
+- Show a notice at the top of the Trash: trashed photos still take space until emptied.
+- **Two storage meters** in the sidebar, red at 85%:
+  - **"Photos on the site"**: total bytes of all images, including the Trash, against **1 GB**. This is GitHub Pages' hard limit for a published site.
+  - **"Repo incl. history"**: `size` from `GET /repos/<OWNER>/<REPO>` (in KB) against **5 GB**, GitHub's recommended repo maximum. That number lags behind, so show at least the site total.
+  - A note under the meters says how much is in the Trash.
+
+## Smart suggestions (on-device AI, opt-in per browser)
+- **Model:** run `Xenova/mobileclip_s0` with Transformers.js (`@huggingface/transformers@4.3.0` from jsDelivr) **in a module Web Worker**.
+  - Load only the vision model, with `dtype: 'fp16'`: a 23 MB download, cached by the browser.
+  - **Do not use the `q8` / quantized vision model. It returns wrong embeddings.** Fall back to `fp32` if fp16 fails to load.
+  - Set `env.allowLocalModels = false`.
+- **Embeddings:**
+  - Embed each photo's **thumbnail** blob into a normalized 512-dimensional vector.
+  - Cache the vectors in IndexedDB keyed by `model:imageId`, so each photo is analyzed once per device.
+  - Analyze Unsorted photos first. New uploads are analyzed right away from the thumbnail blob in memory.
+- **Text side precomputed offline:**
+  - A Node script, `tools/build-vocab.mjs`, embeds a built-in tag list and folder ideas with the fp32 text model.
+  - It writes `js/vocab.js`, with base64 Float32 vectors.
+  - The site therefore never downloads the text model.
+  - **Tag list:** about 40 tags in three facets, each with a descriptive prompt:
+    - *kind*: sketch, pencil, charcoal, ink, line art, watercolor, oil painting, digital art, pixel art, 3d render, manga, comic, storyboard, anime, photo, screenshot…
+    - *subject*: portrait, figure, character design, landscape, cityscape, architecture, still life, animals, food, text, pattern, abstract…
+    - *look*: black and white, colorful, color palette, plus a neutral "an image" anchor that is never suggested.
+  - **Folder ideas:** Sketches, Manga, Comics, Paintings, Digital art, Photos, Screenshots. Each has a prompt and synonyms that match existing folder names (for example "drawings" for Sketches).
+- **Suggestion math** lives in a pure module, `js/suggest.js`, so it can be tested in Node.
+  - Zero-shot scores are `softmax(100 · cosine)`.
+  - **Tags:**
+    - Per facet, suggest the best tag if p ≥ 0.35 and the runner-up if p ≥ 0.3.
+    - Before those, suggest tags from up to 8 similar photos (cosine ≥ 0.45) whose summed similarity is ≥ 0.8. This is how the user's own custom tags get suggested back.
+    - Never suggest a tag the photo already has.
+  - **Folders, for each Unsorted photo:**
+    - Score each folder by the mean of the top 3 cosine similarities to its photos.
+    - The folder's threshold is 0.5 when it has fewer than 3 photos; otherwise it is max(0.45, folder cohesion − 0.08).
+    - A folder wins if it clears its threshold and beats the runner-up by 0.05.
+    - Also take the folder-idea guess when p ≥ 0.6. Map it to an existing folder by name or synonym, or else propose a new folder.
+    - Prefer the learned folder when its score is ≥ 0.6, or when it agrees with the guess.
+    - Group photos by target. Only propose a *new* folder when at least 2 photos point to it.
+- **UI:**
+  - **"Sorting suggestions" panel at the top of Unsorted.** Each row reads "Looks like your **X** photos", "Looks like **X**" or "These look like **Manga**. Make a new folder?". It has:
+    - up to 8 thumbnails, each with an × to leave it out,
+    - a "Move N to X" or "Create 'X' and move N" button,
+    - an × to dismiss the row.
+  - Dismissals are kept in `localStorage` as `imageId>target`.
+  - When the AI is off, the panel instead shows a one-line opt-in ("Turn on" / "Not now"), with download progress and an analysis counter.
+  - A toggle under Edit access turns the AI on or off.
+
 ## Image size handling (GitHub limits)
-GitHub refuses files over 100 MB, Pages sites are capped at 1 GB, and repos should stay under about 1 GB. Process every image **in the browser before upload**:
+GitHub refuses files over 100 MB and Pages sites are capped at 1 GB. Process every image **in the browser before upload**:
 - Decode with `createImageBitmap(file, { imageOrientation: 'from-image' })`, falling back to an `<img>` element and `decode()`.
 - **HEIC:** if decoding fails, lazy-load `heic2any` from jsDelivr and convert to JPEG first.
 - **Display copy:** longest side at most 2400 px, WebP at quality 0.85. Feature-detect WebP encoding with `canvas.toDataURL('image/webp')`; Safari can't encode WebP, so use JPEG on a white background there.
@@ -132,7 +204,6 @@ GitHub refuses files over 100 MB, Pages sites are capped at 1 GB, and repos shou
 - **GIFs:** keep the original so they stay animated, up to 15 MB. The thumbnail is the first frame.
 - **Reject** anything still over 25 MB, with a clear message. Skip non-images; SVG is not accepted.
 - **Upload panel:** show each file as "7.8 MB → 779 KB", then upload progress.
-- **Storage meter** in the sidebar: total bytes against 1 GB, turning red above 800 MB.
 
 ## Loading images fast
 - The grid uses thumbnails only, with `loading="lazy"` and `decoding="async"`. The full image loads only in the lightbox.
@@ -160,9 +231,11 @@ GitHub refuses files over 100 MB, Pages sites are capped at 1 GB, and repos shou
 - `index.html`
 - `css/style.css`
 - `js/config.js`: owner, repo and branch, auto-detected on `<owner>.github.io/<repo>`; size and quality settings.
-- `js/album.js`: pure ops, queries and the masonry function, with no DOM, so they can be unit-tested in Node.
-- `js/github.js`: the GitHub wrapper and `commitChange`.
+- `js/album.js`: pure ops, queries (`visibleImages(album, view, query, tags)`, `folderCounts`, `allTags`, `totalBytes`, `trashBytes`) and the masonry function, with no DOM, so they can be unit-tested in Node.
+- `js/github.js`: the GitHub wrapper, `commitChange`, `compactHistory` and `repoSizeBytes`.
 - `js/images.js`: compression.
+- `js/ai-worker.js`, `js/smart.js`, `js/suggest.js` and `js/vocab.js`: on-device AI, the IndexedDB cache, suggestion math, and the generated vocabulary.
+- `tools/build-vocab.mjs`: regenerates `js/vocab.js`.
 - `js/app.js`: the UI.
 - `album/album.json`: starts as `{ "version": 1, "folders": [], "images": [] }`.
 - `.nojekyll`
@@ -174,11 +247,17 @@ GitHub refuses files over 100 MB, Pages sites are capped at 1 GB, and repos shou
    - A forced conflict that must retry and keep both editors' changes.
    - Two simultaneous editors.
    - Deleting a file that is already gone.
+   - Compacting history: the result has `parents: []` and identical files, and an edit landing mid-compaction survives.
+   - Trash, restore and tag ops; tag AND-filtering; trashed photos excluded from counts and tags.
+   - Suggestions on real sample art (sketches, manga, comics, paintings, photos, screenshots): sketches go to an existing "Drawings" folder, manga gets a new "Manga" folder idea, dismissals stick, and the user's own tags are learned from similar photos.
 3. **A headless-browser run with the GitHub API mocked by request interception:**
    - Unlock with a key.
    - Create a folder.
    - Upload a large generated PNG and check the stored file is smaller WebP.
    - Set the title, add a comment, edit it, move the photo, and delete it.
    - Drag a card onto a folder, drag-reorder, and drop files onto a sidebar folder.
-   - Check the phone width has no horizontal scroll.
+   - Turn on the AI (real model), accept a folder suggestion, add a suggested tag, and filter by clicking a tag.
+   - Trash a photo, Undo, trash again, then Empty trash: the files are gone and history is a single commit.
+   - Check the phone width has no horizontal scroll, including the suggestion panel.
    - Check there are no console errors.
+4. **Before relying on the quantized model, compare the browser's embeddings with Node's fp32 ones** (cosine ≈ 1). The quantized vision model fails this check.

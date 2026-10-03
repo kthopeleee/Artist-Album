@@ -18,8 +18,11 @@ export const CONFIG = {
   gifMaxBytes: 15 * 1024 * 1024,      // GIFs are kept as-is (to stay animated) up to this size
   hardMaxBytes: 25 * 1024 * 1024,     // anything bigger after shrinking is refused
 
-  storageLimitBytes: 1024 * 1024 * 1024, // GitHub's recommended repo size
-  storageWarnBytes: 800 * 1024 * 1024,
+  // GitHub Pages won't publish a site whose current files exceed 1 GB.
+  siteLimitBytes: 1024 * 1024 * 1024,
+  // The whole repo including history: GitHub asks to stay under ~5 GB.
+  repoLimitBytes: 5 * 1024 * 1024 * 1024,
+  warnAt: 0.85,
 
   pageSize: 50, // cards rendered per scroll batch
 };

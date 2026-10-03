@@ -117,6 +117,31 @@ export class GitHubStore {
     return { canPush: !!repo.permissions?.push, login };
   }
 
+  // Repository size including all history, as GitHub reports it (updated by
+  // GitHub periodically, so it lags a little behind).
+  async repoSizeBytes() {
+    const repo = await this.request('GET', this.base);
+    return (repo.size || 0) * 1024;
+  }
+
+  // Frees the space used by deleted photos. Git keeps every old version, so
+  // deleting a file alone never shrinks a repo. This replaces the branch with
+  // a single snapshot commit of what's there now (no history), which leaves the
+  // old versions unreferenced so GitHub's cleanup can remove them.
+  async compactHistory(message) {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const head = (await this.request('GET', `${this.base}/git/ref/heads/${this.branch}`)).object.sha;
+      const { tree } = await this.request('GET', `${this.base}/git/commits/${head}`);
+      const snapshot = await this.request('POST', `${this.base}/git/commits`, { body: { message, tree: tree.sha, parents: [] } });
+      // Someone saved in the meantime: start over from their version so it isn't lost.
+      const now = (await this.request('GET', `${this.base}/git/ref/heads/${this.branch}`)).object.sha;
+      if (now !== head) { await sleep(500 * (attempt + 1)); continue; }
+      await this.request('PATCH', `${this.base}/git/refs/heads/${this.branch}`, { body: { sha: snapshot.sha, force: true } });
+      return snapshot.sha;
+    }
+    throw new GitHubError(409, 'The album kept changing while freeing up space. Please try again in a moment.');
+  }
+
   async createBlob(blob) {
     const content = await toBase64(blob);
     const { sha } = await this.request('POST', `${this.base}/git/blobs`, { body: { content, encoding: 'base64' } });
