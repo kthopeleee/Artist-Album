@@ -96,6 +96,58 @@ export function suggestTags(img, album, emb, max = 8) {
   return out.slice(0, max);
 }
 
+// ---- similar & duplicates -----------------------------------------------------
+
+// Tuned on resized / recompressed / cropped copies of sample art: copies score
+// 0.93+, while the most alike *different* pictures scored 0.83.
+export const DUPLICATE = 0.92;      // same picture (resized, re-saved, lightly cropped)
+export const NEAR_DUPLICATE = 0.86; // probably the same picture, heavily cropped or edited
+const SIMILAR_MIN = 0.45;
+
+export function similarTo(img, album, emb, limit = 12) {
+  const vec = emb.get(img.id);
+  if (!vec) return [];
+  return live(album)
+    .filter(o => o.id !== img.id && emb.has(o.id))
+    .map(o => ({ img: o, score: dot(vec, emb.get(o.id)) }))
+    .filter(s => s.score >= SIMILAR_MIN)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
+}
+
+// Which copy to keep: one that's sorted, tagged or commented, then the larger, then the older.
+function keeperOf(imgs, album) {
+  const folders = new Set(album.folders.map(f => f.id));
+  const worth = i => (i.folder && folders.has(i.folder) ? 4 : 0) + (i.tags?.length || 0) + 2 * (i.comments?.length || 0) + (i.title ? 1 : 0);
+  return [...imgs].sort((a, b) => worth(b) - worth(a) || b.w * b.h - a.w * a.h || String(a.addedAt).localeCompare(String(b.addedAt)))[0];
+}
+
+// Groups of copies: [{ keep, others: [{ img, score, duplicate }] }], biggest first.
+export function duplicateGroups(album, emb) {
+  const photos = live(album).filter(i => emb.has(i.id));
+  const parent = photos.map((_, i) => i);
+  const root = i => (parent[i] === i ? i : (parent[i] = root(parent[i])));
+  for (let i = 0; i < photos.length; i++) {
+    const a = emb.get(photos[i].id);
+    for (let j = i + 1; j < photos.length; j++) {
+      if (dot(a, emb.get(photos[j].id)) >= NEAR_DUPLICATE) parent[root(i)] = root(j);
+    }
+  }
+  const sets = new Map();
+  photos.forEach((p, i) => { const r = root(i); if (!sets.has(r)) sets.set(r, []); sets.get(r).push(p); });
+  return [...sets.values()]
+    .filter(g => g.length > 1)
+    .map(g => {
+      const keep = keeperOf(g, album);
+      const kv = emb.get(keep.id);
+      const others = g.filter(i => i !== keep)
+        .map(img => { const score = dot(kv, emb.get(img.id)); return { img, score, duplicate: score >= DUPLICATE }; })
+        .sort((a, b) => b.score - a.score);
+      return { keep, others };
+    })
+    .sort((a, b) => b.others.length - a.others.length);
+}
+
 // ---- folders ----------------------------------------------------------------
 
 const norm = s => s.trim().toLowerCase();

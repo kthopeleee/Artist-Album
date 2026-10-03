@@ -14,6 +14,8 @@ export function normalize(a) {
   album.version ??= 1;
   album.folders = Array.isArray(album.folders) ? album.folders : [];
   album.images = Array.isArray(album.images) ? album.images : [];
+  // Moodboard layouts: boards[folderId].items[imageId] = { x, y, w, z, flip }
+  album.boards = album.boards && typeof album.boards === 'object' ? album.boards : {};
   for (const img of album.images) {
     img.comments = Array.isArray(img.comments) ? img.comments : [];
     img.tags = Array.isArray(img.tags) ? img.tags : [];
@@ -63,6 +65,7 @@ export const ops = {
   deleteFolder: id => a => {
     a.folders = a.folders.filter(f => f.id !== id);
     for (const img of a.images) if (img.folder === id) img.folder = null;
+    if (a.boards) delete a.boards[id];
   },
   moveFolder: (id, beforeId) => a => {
     a.folders = moveBefore(a.folders, [id], beforeId);
@@ -74,7 +77,11 @@ export const ops = {
   },
   moveImages: (ids, folder) => a => {
     if (folder && !a.folders.some(f => f.id === folder)) return;
-    for (const img of a.images) if (ids.includes(img.id)) img.folder = folder;
+    for (const img of a.images) {
+      if (!ids.includes(img.id) || img.folder === folder) continue;
+      if (img.folder) delete a.boards?.[img.folder]?.items?.[img.id]; // leaves that folder's moodboard
+      img.folder = folder;
+    }
   },
   reorderImages: (ids, beforeId) => a => {
     a.images = moveBefore(a.images, ids, beforeId);
@@ -105,6 +112,34 @@ export const ops = {
       ctx?.remove.push(p.full, p.thumb);
     }
     a.images = a.images.filter(i => !ids.includes(i.id));
+    for (const board of Object.values(a.boards || {})) for (const id of ids) delete board.items?.[id];
+  },
+  // Duplicates: the kept photo takes over the others' tags, comments, title and
+  // folder (when it has none), then the others go to the Trash.
+  mergeAndTrash: (keepId, ids) => a => {
+    const keep = findImg(a, keepId);
+    if (!keep) return;
+    const at = now();
+    for (const img of a.images) {
+      if (!ids.includes(img.id) || img.id === keepId || img.trashedAt) continue;
+      keep.tags ??= [];
+      for (const t of img.tags || []) if (!keep.tags.includes(t)) keep.tags.push(t);
+      for (const c of img.comments || []) if (!keep.comments.some(k => k.id === c.id)) keep.comments.push(c);
+      if (!keep.title && img.title) keep.title = img.title;
+      if (!keep.folder && img.folder && a.folders.some(f => f.id === img.folder)) keep.folder = img.folder;
+      img.trashedAt = at;
+    }
+    keep.comments.sort((x, y) => String(x.at).localeCompare(String(y.at)));
+  },
+  // Moodboard: patch = { imageId: { x, y, w, z, flip } | null }
+  setBoardItems: (boardId, patch) => a => {
+    a.boards ??= {};
+    const board = (a.boards[boardId] ??= { items: {} });
+    board.items ??= {};
+    for (const [id, p] of Object.entries(patch)) {
+      if (p === null) delete board.items[id];
+      else if (findImg(a, id)) board.items[id] = { ...board.items[id], ...p };
+    }
   },
   setTitle: (id, title) => a => {
     const img = findImg(a, id);

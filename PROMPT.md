@@ -261,6 +261,42 @@ To prevent it:
 - **Delete** commits the removal, then compacts the vault repo's history to free space.
 - **Downloads** fetch each part via the contents API (`Accept: application/vnd.github.raw+json`), decrypt, join, and save with the original name.
 
+## Moodboard per folder (PureRef-style canvas)
+- **Switch:** a Grid/Moodboard toggle in each folder's header, remembered per folder and kept in the hash as `mode=board`. The canvas fills the screen under the top bar.
+- **Layout data:** in `album.json` as `boards[folderId].items[imageId] = { x, y, w, z, flip }`.
+  - Op: `setBoardItems(boardId, patch)`. The patch merges, `null` removes, and unknown ids are ignored.
+  - Clean up the layout when a photo moves folder, is deleted, or its folder is deleted.
+- **Placing photos:**
+  - Photos without a position are auto-placed in columns below the others: about 2 columns on narrow screens, 5 on wide ones.
+  - The first edit pins every auto-placed photo, so nothing jumps around later.
+- **Canvas:** a CSS-transformed world (`translate + scale`); the dotted background moves with it. Set `--iz = 1/zoom` so outlines and the resize handle keep the same size at any zoom.
+- **Pointer events, editors:**
+  - Drag a photo to move it. Pressing on a photo selects it and raises it on the first move.
+  - Drag the corner handle to resize, keeping the aspect ratio.
+  - Shift-click or Shift-drag a marquee to multi-select.
+  - Drag empty space to pan.
+  - Two pointers pinch-zoom.
+- **Pointer events, viewers:** they can only pan and zoom; a tap opens the photo.
+- **Wheel:** scrolling pans. Ctrl/⌘ + wheel or a trackpad pinch zooms around the cursor, with each step clamped (±40) so a mouse wheel isn't jumpy.
+- **Toolbar:** zoom −/100%/+, Fit, Tidy up (confirm first; columns follow the screen's shape), and for the selection: Front, Back, Flip, Open, Delete (to Trash).
+- **Keys:** arrows nudge (Shift = 10 px), Delete, Esc, F, 0, +, −, ⌘A.
+- **Saving:** debounce 1.2 s, then one `setBoardItems` commit. Keep unsaved positions in a local overlay until GitHub confirms.
+- **Full-size images:** when a visible photo is shown wider than its 600 px thumbnail, swap in the full image.
+- **Dropped files** land where they're dropped, in rows of 4. Batches continue the rows.
+
+## Similar photos & duplicates (on-device AI)
+- **Thresholds, measured on resized, re-saved and cropped copies of sample art:**
+  - Copies scored 0.93 or more.
+  - The most alike *different* pictures scored 0.83.
+  - Use `DUPLICATE = 0.92` and `NEAR_DUPLICATE = 0.86`.
+- **`similarTo(img)`:** the top 12 by cosine, at least 0.45, excluding the Trash. Shown in the lightbox as "Duplicate", "Near-duplicate" or "N% alike", with a hover trash button. When copies exist, offer "Remove it/them".
+- **`duplicateGroups()`:**
+  - Group with union-find over pairs scoring at least 0.86.
+  - Keeper: one sorted into a folder, then the most tags, comments and title, then the largest, then the oldest.
+  - Copies (≥ 0.92) are pre-ticked; near-duplicates are not.
+  - A "Duplicates" page per group allows "Keep this one instead", per-group remove, and "Remove all ticked".
+- **`mergeAndTrash(keepId, ids)`:** moves the copies' tags, comments (in date order), title and folder onto the keeper, then trashes the copies. Offer Undo.
+
 ## Look and feel
 - Warm off-white background and white surfaces; a serif display font for headings and system sans for body text.
 - 16 px rounded cards with a subtle darkening on hover, and a round select check in the corner.

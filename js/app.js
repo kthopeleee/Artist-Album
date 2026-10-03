@@ -6,13 +6,15 @@ import { GitHubStore } from './github.js';
 import { processFile, isImageFile, formatBytes } from './images.js';
 import { SmartAI } from './smart.js';
 import { Vault } from './vault.js';
+import { Moodboard } from './moodboard.js';
 
 // Must match <meta name="app-version"> in index.html (tools/bump-version.mjs updates both).
-const APP_VERSION = '20261003-145547';
+const APP_VERSION = '20261003-153449';
 
 const $ = sel => document.querySelector(sel);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const copies = n => `${n} ${n === 1 ? 'copy' : 'copies'}`;
 const icon = name => `<svg class="ic"><use href="#i-${name}"/></svg>`;
 
 const IMG_DRAG = 'application/x-album-images';
@@ -27,6 +29,7 @@ const KEYS = {
   dismissed: 'artist-album.ai-dismissed', promo: 'artist-album.ai-promo', collapsed: 'artist-album.ai-collapsed',
 };
 const prefs = {
+  raw: k => { try { return localStorage.getItem(k) || ''; } catch { return ''; } },
   get: k => { try { return localStorage.getItem(KEYS[k]) || ''; } catch { return ''; } },
   set: (k, v) => { try { v ? localStorage.setItem(KEYS[k], v) : localStorage.removeItem(KEYS[k]); } catch {} },
 };
@@ -50,6 +53,7 @@ const state = {
   selecting: false,
   lightbox: null,       // open image id
   repoBytes: null,
+  mode: 'grid',         // folders: 'grid' | 'board' (moodboard)
 };
 
 const pending = [];          // edits not yet confirmed by GitHub, applied on top of state.server
@@ -64,7 +68,7 @@ const saveDismissed = () => prefs.set('dismissed', JSON.stringify([...dismissed]
 
 const smart = new SmartAI({
   getThumb: img => fetchImageBlob(img, 'thumb'),
-  onChange: () => safely(renderSuggestions, renderLightboxSmart, renderSettingsAI),
+  onChange: () => safely(renderSuggestions, renderLightboxSmart, renderLightboxSimilar, renderSettingsAI, renderDupes),
 });
 
 const vault = new Vault({
@@ -73,7 +77,24 @@ const vault = new Vault({
 });
 
 const canEdit = () => !!gh.token;
-const isFolderView = v => v !== 'all' && v !== 'unsorted' && v !== 'trash' && v !== 'vault';
+const isFolderView = v => !['all', 'unsorted', 'trash', 'vault', 'dupes'].includes(v);
+const boardMode = () => isFolderView(state.view) && state.mode === 'board';
+const modeKey = folder => `artist-album.mode.${folder}`;
+
+const moodboard = new Moodboard($('#moodboard'), {
+  images: () => currentList(),
+  layout: () => state.album.boards?.[state.view],
+  canEdit,
+  setImgSrc: (...a) => setImgSrc(...a),
+  loadImage: (...a) => loadImage(...a),
+  open: id => openLightbox(id),
+  save: (boardId, patch) => save('Arrange moodboard', ops.setBoardItems(boardId, patch)),
+  trash: ids => trashImages(ids),
+  confirmTidy: () => ask({
+    title: 'Tidy up this moodboard?', input: false, ok: 'Tidy up',
+    text: 'Every photo is lined up in neat columns. Your current arrangement is replaced.',
+  }),
+});
 const folderName = id => state.album.folders.find(f => f.id === id)?.name;
 const findImage = id => state.album.images.find(i => i.id === id);
 const currentList = () => visibleImages(state.album, state.view, state.query, state.view === 'trash' ? [] : state.tags);
@@ -193,9 +214,13 @@ function renderAll() {
   document.body.classList.toggle('can-edit', canEdit());
   document.body.classList.toggle('selecting', canEdit() && (state.selecting || state.selected.size > 0));
   document.body.classList.toggle('in-vault', state.view === 'vault');
+  document.body.classList.toggle('in-dupes', state.view === 'dupes');
+  document.body.classList.toggle('mb-mode', boardMode());
   $('#vaultView').hidden = state.view !== 'vault';
+  $('#dupesView').hidden = state.view !== 'dupes';
   safely(renderSidebar, renderHeader, renderTagBar, renderNotice, renderSuggestions, renderGrid, renderSelection, renderLightbox,
-    () => state.view === 'vault' && vault.render());
+    () => state.view === 'vault' && vault.render(), renderDupes,
+    () => (boardMode() ? moodboard.show(state.view) : moodboard.hide()));
 }
 
 let errorShown = false;
@@ -243,7 +268,7 @@ function renderSidebar() {
   for (const btn of document.querySelectorAll('.nav > .nav-item')) {
     btn.classList.toggle('active', btn.dataset.view === state.view);
     const view = btn.dataset.view;
-    btn.querySelector('.count').textContent = view === 'vault' ? (vault.doc ? vault.doc.items.length : '')
+    btn.querySelector('.count').textContent = view === 'vault' ? (vault.doc ? vault.doc.items.length : '') : view === 'dupes' ? ''
       : state.loaded ? counts[view] || (view === 'trash' ? '' : 0) : '';
   }
   $('#trashNav').hidden = !canEdit() && !counts.trash;
@@ -295,7 +320,10 @@ function renderSidebar() {
 }
 
 function renderHeader() {
-  const title = { all: 'All photos', unsorted: 'Unsorted', trash: 'Trash', vault: 'Drawings' }[state.view] || folderName(state.view) || '';
+  const title = { all: 'All photos', unsorted: 'Unsorted', trash: 'Trash', vault: 'Drawings', dupes: 'Duplicates' }[state.view] || folderName(state.view) || '';
+  const toggle = $('#modeToggle');
+  toggle.hidden = !isFolderView(state.view);
+  for (const b of toggle.querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.mode === (boardMode() ? 'board' : 'grid')));
   $('#addBtn span').textContent = state.view === 'vault' ? 'Upload files' : 'Add photos';
   $('#viewTitle').textContent = title;
   document.title = state.view === 'all' ? 'Artist Album' : `${title} · Artist Album`;
@@ -605,6 +633,7 @@ function renderLightbox() {
 
   renderLightboxTags(img);
   renderLightboxSmart();
+  renderLightboxSimilar();
   renderComments(img);
   $('#commentAs').textContent = myName() ? `Commenting as ${myName()}` : '';
 }
@@ -660,6 +689,157 @@ function renderLightboxSmart() {
   if (box.dataset.html === html) return;
   box.dataset.html = html;
   box.innerHTML = html;
+}
+
+// "Similar photos": the closest matches by the on-device AI; copies are marked
+// and can be removed (their tags and comments move to this photo).
+function renderLightboxSimilar() {
+  const box = $('#lbSimilar');
+  const img = state.lightbox && findImage(state.lightbox);
+  let html = '';
+  if (img && !img.trashedAt && canEdit()) {
+    if (!smart.enabled) {
+      html = `<button class="link" data-sim="ai-on">${icon('copy')} Find similar photos and duplicates</button>`;
+    } else if (smart.active && smart.emb.has(img.id)) {
+      const { DUPLICATE, NEAR_DUPLICATE } = smart.lib;
+      const list = smart.similar(img, state.album) || [];
+      const dups = list.filter(s => s.score >= DUPLICATE);
+      html = `<h2 class="lb-h">Similar photos <span>${list.length ? `(${list.length})` : ''}</span></h2>`;
+      if (!list.length) html += '<p class="muted small">Nothing similar yet.</p>';
+      else {
+        if (dups.length) {
+          html += `<div class="dup-note">${dups.length === 1 ? 'One photo looks like a copy' : `${dups.length} photos look like copies`} of this one.
+            <button class="btn primary sm" data-sim="merge">Remove ${dups.length === 1 ? 'it' : 'them'}</button></div>`;
+        }
+        html += `<div class="sim-strip">${list.map(s => {
+          const label = s.score >= DUPLICATE ? 'Duplicate' : s.score >= NEAR_DUPLICATE ? 'Near-duplicate' : `${Math.round(s.score * 100)}% alike`;
+          return `<div class="sim" data-id="${esc(s.img.id)}"><img alt="" title="${esc(s.img.title || s.img.originalName || '')}">
+            <span class="sim-score${s.score >= NEAR_DUPLICATE ? ' dup' : ''}">${label}</span>
+            <button class="sim-x" data-sim="trash" title="Move to Trash" aria-label="Move to Trash">${icon('trash')}</button></div>`;
+        }).join('')}</div>`;
+      }
+    }
+  }
+  if (box.dataset.html === html) return;
+  box.dataset.html = html;
+  box.innerHTML = html;
+  for (const el of box.querySelectorAll('.sim')) {
+    const other = findImage(el.dataset.id);
+    if (other) setImgSrc(el.querySelector('img'), other, 'thumb', () => {});
+  }
+}
+
+function removeCopies(keepId, ids) {
+  if (!ids.length) return;
+  save(`Remove ${plural(ids.length, 'duplicate photo')}`, ops.mergeAndTrash(keepId, ids));
+  toast(`Moved ${copies(ids.length)} to the Trash. Tags and comments were kept.`, '', {
+    label: 'Undo', fn: () => save(`Restore ${plural(ids.length, 'photo')}`, ops.restoreImages(ids)),
+  });
+}
+
+// ---- Duplicates page ----------------------------------------------------------------
+
+const dupeKeep = new Map();  // group key -> chosen keeper id
+const dupeChoice = new Map(); // image id -> true (remove) / false (keep)
+
+function dupeGroups() {
+  const groups = smart.duplicates(state.album) || [];
+  return groups.map(g => {
+    const members = [g.keep, ...g.others.map(o => o.img)];
+    const key = members.map(m => m.id).sort().join(',');
+    const keep = members.find(m => m.id === dupeKeep.get(key)) || g.keep;
+    const kv = smart.emb.get(keep.id);
+    const others = members.filter(m => m !== keep).map(img => {
+      const score = smart.lib.dot(kv, smart.emb.get(img.id));
+      const duplicate = score >= smart.lib.DUPLICATE;
+      return { img, score, duplicate, remove: dupeChoice.has(img.id) ? dupeChoice.get(img.id) : duplicate };
+    });
+    return { key, keep, others };
+  });
+}
+
+function renderDupes() {
+  const box = $('#dupesView');
+  if (box.hidden) return;
+  let html;
+  const card = inner => `<div class="vault-card"><div class="vault-icon">${icon('copy')}</div>${inner}</div>`;
+  if (!canEdit()) {
+    html = card('<h2>Duplicates</h2><p class="muted">Add your GitHub key under <b>Edit access</b> to find and remove duplicate photos.</p>');
+  } else if (!smart.enabled) {
+    html = card(`<h2>Find duplicate photos</h2><p class="muted">The on-device AI compares your photos and finds copies, even resized, re-saved or cropped ones, so you can remove the extras. It runs privately on this device. The first time, it downloads a 23 MB model.</p><button class="btn primary" data-d="ai-on">Turn on and look for duplicates</button>`);
+  } else if (!smart.active || smart.state === 'analyzing') {
+    const pct = smart.state === 'analyzing' ? smart.done / Math.max(1, smart.total) : smart.downloadProgress;
+    html = card(`<h2>Looking for duplicates…</h2><p class="muted">${esc(aiStatusText() || 'Starting the AI…')}</p><div class="ai-progress"><span style="width:${Math.round(pct * 100)}%"></span></div>${smart.state === 'error' ? '<button class="btn primary" data-d="ai-retry">Try again</button>' : ''}`);
+  } else {
+    const groups = dupeGroups();
+    const selected = groups.reduce((n, g) => n + g.others.filter(o => o.remove).length, 0);
+    if (!groups.length) {
+      html = card(`<h2>No duplicates found</h2><p class="muted">None of your ${plural(state.album.images.filter(i => !i.trashedAt).length, 'photo')} look like copies of each other.</p>`);
+    } else {
+      html = `<div class="dup-head"><p>${plural(groups.length, 'group')} of look-alike photos. Copies are ticked; near-duplicates (heavier crops or edits) are left for you to decide. Removed copies go to the Trash, and their tags and comments move to the photo you keep.</p>
+        <button class="btn primary" data-d="remove-all" ${selected ? '' : 'disabled'}>Remove ${selected} ticked ${selected === 1 ? 'copy' : 'copies'}</button></div>` +
+        groups.map(g => {
+          const n = g.others.filter(o => o.remove).length;
+          const tile = (img, extra) => {
+            const meta = [`${img.w}×${img.h}`, formatBytes(img.bytes || 0)].join(' · ');
+            const counts = [img.tags?.length && plural(img.tags.length, 'tag'), img.comments?.length && plural(img.comments.length, 'comment')].filter(Boolean).join(' · ');
+            return `<div class="dup-tile ${extra.cls}" data-id="${esc(img.id)}">
+              <button class="dup-img" data-d="open" title="Open"><img alt=""></button>
+              <div class="dup-meta"><b>${esc(img.title || img.originalName || 'Untitled')}</b><span>${esc(img.folder && folderName(img.folder) ? folderName(img.folder) : 'Unsorted')}</span><span>${esc(meta)}</span>${counts ? `<span>${esc(counts)}</span>` : ''}</div>
+              ${extra.html}</div>`;
+          };
+          return `<section class="dup-group" data-key="${esc(g.key)}"><div class="dup-tiles">
+            ${tile(g.keep, { cls: 'keep', html: '<span class="dup-badge">Keep</span>' })}
+            ${g.others.map(o => tile(o.img, {
+              cls: o.remove ? 'checked' : '',
+              html: `<span class="dup-score${o.duplicate ? ' dup' : ''}">${o.duplicate ? 'Copy' : 'Near-duplicate'} · ${Math.round(o.score * 100)}%</span>
+                <label class="dup-check"><input type="checkbox" data-d="toggle" ${o.remove ? 'checked' : ''}> Remove</label>
+                <button class="link small" data-d="keep">Keep this one instead</button>`,
+            })).join('')}
+          </div><div class="dup-foot"><button class="btn ghost sm" data-d="remove" ${n ? '' : 'disabled'}>Remove ${copies(n)} from this group</button></div></section>`;
+        }).join('');
+    }
+  }
+  if (box.dataset.html === html) return;
+  box.dataset.html = html;
+  box.innerHTML = html;
+  for (const el of box.querySelectorAll('.dup-tile')) {
+    const img = findImage(el.dataset.id);
+    if (img) setImgSrc(el.querySelector('img'), img, 'thumb', () => {});
+  }
+}
+
+function bindDupes() {
+  const box = $('#dupesView');
+  box.addEventListener('click', e => {
+    const btn = e.target.closest('[data-d]');
+    if (!btn) return;
+    const action = btn.dataset.d;
+    if (action === 'ai-on') return smart.enable(state.album);
+    if (action === 'ai-retry') return smart.start(state.album);
+    const groups = dupeGroups();
+    const group = groups.find(g => g.key === btn.closest('.dup-group')?.dataset.key);
+    const id = btn.closest('.dup-tile')?.dataset.id;
+    if (action === 'open' && id) openLightbox(id);
+    else if (action === 'keep' && group && id) { dupeKeep.set(group.key, id); dupeChoice.delete(id); renderDupes(); }
+    else if (action === 'remove' && group) {
+      const ids = group.others.filter(o => o.remove).map(o => o.img.id);
+      removeCopies(group.keep.id, ids);
+    } else if (action === 'remove-all') {
+      const plan = groups.map(g => [g.keep.id, g.others.filter(o => o.remove).map(o => o.img.id)]).filter(([, ids]) => ids.length);
+      const ids = plan.flatMap(([, x]) => x);
+      if (!ids.length) return;
+      save(`Remove ${plural(ids.length, 'duplicate photo')}`, a => { for (const [keep, x] of plan) ops.mergeAndTrash(keep, x)(a); });
+      toast(`Moved ${copies(ids.length)} to the Trash. Tags and comments were kept.`, '', {
+        label: 'Undo', fn: () => save(`Restore ${plural(ids.length, 'photo')}`, ops.restoreImages(ids)),
+      });
+    }
+  });
+  box.addEventListener('change', e => {
+    if (e.target.dataset.d !== 'toggle') return;
+    dupeChoice.set(e.target.closest('.dup-tile').dataset.id, e.target.checked);
+    renderDupes();
+  });
 }
 
 function showLightboxImage(img) {
@@ -736,6 +916,7 @@ function renderComments(img) {
 function hashUrl() {
   const p = new URLSearchParams();
   if (state.view !== 'all') p.set('view', state.view);
+  if (boardMode()) p.set('mode', 'board');
   if (state.tags.length) p.set('tags', state.tags.join(','));
   if (state.lightbox) p.set('img', state.lightbox);
   const s = p.toString();
@@ -746,6 +927,7 @@ function readHash() {
   const p = new URLSearchParams(location.hash.slice(1));
   return {
     view: p.get('view') || 'all',
+    mode: p.get('mode') === 'board' ? 'board' : null,
     img: p.get('img'),
     key: p.get('key'),
     tags: (p.get('tags') || '').split(',').map(normTag).filter(Boolean),
@@ -779,6 +961,7 @@ function setView(view) {
     state.view = view;
     state.limit = CONFIG.pageSize;
     state.selected.clear();
+    state.mode = isFolderView(view) ? prefs.raw(modeKey(view)) || 'grid' : 'grid';
     window.scrollTo(0, 0);
   }
   history.replaceState(history.state, '', hashUrl());
@@ -844,7 +1027,7 @@ async function prepareImage(file, folder) {
   };
 }
 
-async function addFiles(fileList, folderOverride) {
+async function addFiles(fileList, folderOverride, { onAdded } = {}) {
   const all = [...fileList];
   const files = all.filter(isImageFile);
   if (!files.length) {
@@ -871,7 +1054,7 @@ async function addFiles(fileList, folderOverride) {
     if (!batch.length) continue;
     // Keep at most two batches waiting, so memory stays low on huge uploads.
     if (inflight.length >= 2) await inflight.shift();
-    inflight.push(uploadBatch(batch, panel));
+    inflight.push(uploadBatch(batch, panel).then(ok => { if (ok) onAdded?.(batch.map(b => b.rec)); }));
     for (const b of batch) smart.add(b.rec.id, b.thumb); // suggestions are ready by the time it's uploaded
   }
   await Promise.all(inflight);
@@ -1358,7 +1541,16 @@ function bindFileDrop() {
     const folder = targetFolder(e);
     const vaultDrop = toVault(e);
     hide();
-    if (!vaultDrop) return addFiles(e.dataTransfer.files, folder);
+    if (!vaultDrop) {
+      if (folder === undefined && boardMode()) {
+        const point = moodboard.toWorld(e.clientX, e.clientY);
+        let placed = 0;
+        return addFiles(e.dataTransfer.files, undefined, {
+          onAdded: recs => { moodboard.placeAt(recs, point, placed); placed += recs.length; },
+        });
+      }
+      return addFiles(e.dataTransfer.files, folder);
+    }
     if (!requireKey()) return;
     if (state.view !== 'vault') setView('vault');
     vault.open().then(() => vault.upload(e.dataTransfer.files));
@@ -1414,6 +1606,15 @@ function bindBoard() {
     setView('all');
   });
   $('#emptyTrashBtn').addEventListener('click', () => purge(trashedIds()));
+  $('#modeToggle').addEventListener('click', e => {
+    const b = e.target.closest('[data-mode]');
+    if (!b) return;
+    state.mode = b.dataset.mode;
+    try { localStorage.setItem(modeKey(state.view), state.mode); } catch {}
+    history.replaceState(history.state, '', hashUrl());
+    renderAll();
+  });
+  bindDupes();
   $('#uploadClose').addEventListener('click', () => { $('#uploadPanel').hidden = true; });
 
   $('#tagChips').addEventListener('click', e => {
@@ -1552,6 +1753,21 @@ function bindLightbox() {
     const filter = e.target.closest('[data-filter-tag]');
     if (filter) filterByTag(filter.dataset.filterTag);
   });
+  $('#lbSimilar').addEventListener('click', e => {
+    const img = findImage(state.lightbox);
+    if (!img) return;
+    if (e.target.closest('[data-sim="ai-on"]')) return smart.enable(state.album);
+    if (e.target.closest('[data-sim="merge"]')) {
+      const ids = (smart.similar(img, state.album) || []).filter(s => s.score >= smart.lib.DUPLICATE).map(s => s.img.id);
+      return removeCopies(img.id, ids);
+    }
+    const tile = e.target.closest('.sim');
+    if (!tile) return;
+    if (e.target.closest('[data-sim="trash"]')) return trashImages([tile.dataset.id]);
+    state.lightbox = tile.dataset.id;
+    history.replaceState(history.state, '', hashUrl());
+    renderLightbox();
+  });
   $('#lbSuggest').addEventListener('click', e => {
     if (e.target.closest('[data-ai-on]')) return smart.enable(state.album);
     if (e.target.closest('[data-ai-retry]')) return smart.start(state.album);
@@ -1689,6 +1905,7 @@ function bindGlobal() {
       if (e.key === 'Escape') e.target.blur();
       return;
     }
+    if (boardMode() && moodboard.key(e)) return;
     if (e.key === 'Escape' && (state.selected.size || state.selecting)) {
       state.selected.clear();
       state.selecting = false;
@@ -1712,6 +1929,7 @@ function bindGlobal() {
       return apply();
     }
     if (h.view !== state.view) { state.view = h.view; state.limit = CONFIG.pageSize; }
+    state.mode = h.mode || 'grid';
     state.tags = h.tags;
     state.lightbox = h.img;
     renderAll();
@@ -1763,6 +1981,7 @@ function init() {
     prefs.set('token', h.key);
   }
   state.view = h.view;
+  state.mode = h.mode || (isFolderView(h.view) ? prefs.raw(modeKey(h.view)) || 'grid' : 'grid');
   state.tags = h.tags;
   state.lightbox = h.img;
   history.replaceState(null, '', hashUrl()); // also strips #key= from the address bar

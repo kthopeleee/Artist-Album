@@ -197,6 +197,18 @@ export class SmartAI {
     return this.active ? this.lib.suggestTags(img, album, this.emb) : [];
   }
 
+  similar(img, album) {
+    return this.active && this.emb.has(img.id) ? this.lib.similarTo(img, album, this.emb) : null;
+  }
+
+  duplicates(album) {
+    if (!this.active) return null;
+    if (this.dupMemo?.album === album && this.dupMemo.version === this.version) return this.dupMemo.groups;
+    const groups = this.lib.duplicateGroups(album, this.emb);
+    this.dupMemo = { album, version: this.version, groups };
+    return groups;
+  }
+
   folderSuggestions(album, dismissed) {
     if (!this.active) return [];
     const key = `${this.version}|${dismissed.size}`;

@@ -12,6 +12,18 @@ A personal, Pinterest-style image board that lives entirely on GitHub. GitHub Pa
   - For several photos, use **Select** (with **Select all** for a whole folder), then **Download**. They arrive as one ZIP file.
   - You get the copy stored in the album. Photos over 2 MB or 2400 px were shrunk on upload, so you won't get the original full-size file back.
 - **Tags:** type them on a photo, or pick suggested ones. Click a tag on a photo, or in the tag bar above the board, to show only photos with that tag. Search covers titles, tags, comments and file names.
+- **Moodboard:** every folder has a **Grid / Moodboard** switch. The moodboard is a free-form canvas, like PureRef.
+  - Drag photos anywhere and resize them from the corner. **Front**, **Back** and **Flip** are in the toolbar.
+  - **Shift**-click or **Shift**-drag to select several.
+  - To move around, drag empty space, or scroll with the mouse or trackpad.
+  - To zoom, pinch, or hold **Ctrl/⌘** and scroll. **F** shows everything.
+  - Files you drop onto the board land where you drop them.
+  - Zooming in shows the full-size image.
+  - The layout is saved to GitHub, so it's the same on every device.
+- **Similar photos and duplicates:**
+  - Inside each photo, **Similar photos** shows the closest matches and marks copies. **Remove it** sends a copy to the Trash and moves its tags and comments onto the photo you keep.
+  - The **Duplicates** page scans the whole album, groups copies (even resized, re-saved or lightly cropped ones), picks the best copy to keep, and lets you remove the rest. Heavier crops or edits are shown as "near-duplicates" and are never removed unless you tick them.
+  - Both use the on-device AI.
 - **Smart suggestions:** an AI that runs on your own device suggests tags for each photo and a folder for each Unsorted photo, for example "these look like Sketches" or "these look like Manga, make a new folder?".
 - **Trash:** deleting moves a photo to the Trash, where it can be restored. Emptying the Trash deletes the photos for good and actually frees the space.
 - **Drawings (private):** a separate place for your own drawing files: Procreate, PSD, Clip Studio, Krita, anything. They are kept in a **private** repo and never appear on the photo site. They can be locked with a password, plus Touch ID. See below.
