@@ -1,6 +1,12 @@
 {
  "version": 1,
- "folders": [],
+ "folders": [
+  {
+   "id": "f_musih4ba3ocmnm",
+   "name": "Sketches",
+   "createdAt": "2026-10-03T14:52:45.648Z"
+  }
+ ],
  "images": [
   {
    "id": "i_musfugotcjxkiw",
@@ -15,7 +21,9 @@
    "originalName": "Screenshot 2026-01-19 at 2.11.40 AM.png",
    "addedAt": "2026-10-03T13:39:08.669Z",
    "addedBy": "Katie Lee",
-   "comments": []
+   "comments": [],
+   "tags": [],
+   "trashedAt": null
   },
   {
    "id": "i_musfq9s7mfygsp",
@@ -30,8 +38,10 @@
    "originalName": "Screenshot 2025-01-09 at 8.32.36 AM.png",
    "addedAt": "2026-10-03T13:35:53.095Z",
    "addedBy": "Katie Lee",
-   "comments": []
+   "comments": [],
+   "tags": [],
+   "trashedAt": null
   }
  ],
- "updatedAt": "2026-10-03T13:39:09.768Z"
+ "updatedAt": "2026-10-03T14:52:45.648Z"
 }
