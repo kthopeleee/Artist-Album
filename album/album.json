@@ -7,6 +7,22 @@
    "createdAt": "2026-10-03T13:29:39.452Z"
   }
  ],
- "images": [],
- "updatedAt": "2026-10-03T13:29:39.452Z"
+ "images": [
+  {
+   "id": "i_musfi9zauov18a",
+   "folder": "f_musfi8u7yve7rb",
+   "title": "",
+   "w": 2400,
+   "h": 1600,
+   "bytes": 19830,
+   "thumbBytes": 2238,
+   "ext": "webp",
+   "thumbExt": "webp",
+   "originalName": "live-test.png",
+   "addedAt": "2026-10-03T13:29:40.102Z",
+   "addedBy": "Setup test",
+   "comments": []
+  }
+ ],
+ "updatedAt": "2026-10-03T13:29:41.826Z"
 }
