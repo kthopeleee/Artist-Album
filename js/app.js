@@ -128,8 +128,10 @@ async function load() {
 async function loadRepoSize() {
   try {
     state.repoBytes = await gh.repoSizeBytes();
-    renderSidebar();
-  } catch {}
+  } catch {
+    state.repoBytes ??= 0; // unknown (e.g. rate limited): the meter falls back to the photos' size
+  }
+  renderSidebar();
 }
 
 async function refresh() {
