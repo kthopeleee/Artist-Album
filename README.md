@@ -7,6 +7,10 @@ A personal, Pinterest-style image board that lives entirely on GitHub. GitHub Pa
 - **Add photos:** drag images anywhere onto the page, paste them, or click **Add photos**.
 - **Folders:** make folders, then drag photos onto a folder in the sidebar to move them. Drag a photo onto another photo to reorder.
 - **Photo view:** click a photo to open it large. The side panel has the title, folder, tags, download link and comments.
+- **Download:**
+  - Hover a photo on the board and click its download button, or use **Download** inside a photo.
+  - For several photos, use **Select** (with **Select all** for a whole folder), then **Download**. They arrive as one ZIP file.
+  - You get the copy stored in the album. Photos over 2 MB or 2400 px were shrunk on upload, so you won't get the original full-size file back.
 - **Tags:** type them on a photo, or pick suggested ones. Click a tag on a photo, or in the tag bar above the board, to show only photos with that tag. Search covers titles, tags, comments and file names.
 - **Smart suggestions:** an AI that runs on your own device suggests tags for each photo and a folder for each Unsorted photo, for example "these look like Sketches" or "these look like Manga, make a new folder?".
 - **Trash:** deleting moves a photo to the Trash, where it can be restored. Emptying the Trash deletes the photos for good and actually frees the space.

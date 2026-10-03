@@ -9,21 +9,22 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='3' width='11' height='15' rx='3' fill='%23d9482b'/%3E%3Crect x='18' y='3' width='11' height='9' rx='3' fill='%23e8a33d'/%3E%3Crect x='3' y='21' width='11' height='8' rx='3' fill='%233d7be8'/%3E%3Crect x='18' y='15' width='11' height='14' rx='3' fill='%2332a37f'/%3E%3C/svg%3E">
   <!-- Every file is loaded with ?v=<version> so a browser can never mix old cached
        code with a new page. After changing any CSS/JS, run: node tools/bump-version.mjs -->
-  <meta name="app-version" content="20261003-102040">
+  <meta name="app-version" content="20261003-102835">
   <link rel="preconnect" href="https://api.github.com" crossorigin>
-  <link rel="stylesheet" href="css/style.css?v=20261003-102040">
+  <link rel="stylesheet" href="css/style.css?v=20261003-102835">
   <script type="importmap">
   { "imports": {
-    "./js/config.js": "./js/config.js?v=20261003-102040",
-    "./js/album.js": "./js/album.js?v=20261003-102040",
-    "./js/github.js": "./js/github.js?v=20261003-102040",
-    "./js/images.js": "./js/images.js?v=20261003-102040",
-    "./js/smart.js": "./js/smart.js?v=20261003-102040",
-    "./js/suggest.js": "./js/suggest.js?v=20261003-102040",
-    "./js/vocab.js": "./js/vocab.js?v=20261003-102040"
+    "./js/config.js": "./js/config.js?v=20261003-102835",
+    "./js/album.js": "./js/album.js?v=20261003-102835",
+    "./js/github.js": "./js/github.js?v=20261003-102835",
+    "./js/images.js": "./js/images.js?v=20261003-102835",
+    "./js/smart.js": "./js/smart.js?v=20261003-102835",
+    "./js/suggest.js": "./js/suggest.js?v=20261003-102835",
+    "./js/vocab.js": "./js/vocab.js?v=20261003-102835",
+    "./js/zip.js": "./js/zip.js?v=20261003-102835"
   } }
   </script>
-  <script type="module" src="js/app.js?v=20261003-102040"></script>
+  <script type="module" src="js/app.js?v=20261003-102835"></script>
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -133,7 +134,9 @@
 
   <div class="selection-bar" id="selectionBar" hidden>
     <strong id="selCount"></strong>
+    <button class="btn ghost sm" id="selAll">Select all</button>
     <select id="selMove" aria-label="Move selected photos"></select>
+    <button class="btn ghost sm" id="selDownload"><svg class="ic"><use href="#i-download"/></svg>Download</button>
     <button class="btn ghost sm" id="selTag"><svg class="ic"><use href="#i-tag"/></svg>Tag</button>
     <button class="btn ghost sm" id="selRestore"><svg class="ic"><use href="#i-restore"/></svg>Restore</button>
     <button class="btn danger-ghost sm" id="selDelete"><svg class="ic"><use href="#i-trash"/></svg><span>Delete</span></button>

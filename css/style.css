@@ -235,6 +235,17 @@ a { color: var(--accent); }
 .card.selected .card-media { box-shadow: 0 0 0 3px var(--accent); }
 .selecting .card { cursor: pointer; }
 body:not(.can-edit) .card-check { display: none; }
+.card-dl {
+  position: absolute; top: 10px; right: 10px; z-index: 2;
+  width: 32px; height: 32px; border-radius: 50%; border: 0; padding: 0;
+  display: grid; place-items: center; background: rgba(255,255,255,.94); color: #1f1c19;
+  box-shadow: 0 1px 4px rgba(0,0,0,.25); opacity: 0; transition: opacity .12s, transform .1s;
+}
+.card-dl .ic { width: 16px; height: 16px; }
+.card:hover .card-dl, .card:focus-within .card-dl { opacity: 1; }
+.card-dl:hover { transform: scale(1.08); }
+.selecting .card-dl { display: none; }
+@media (hover: none) { .card-dl { display: none; } } /* phones: use Download inside the photo */
 .card.dragging { opacity: .35; }
 /* Reorder indicator: a bar on the side of the card the photo will land next to */
 .card.drop-before::before, .card.drop-after::before {

@@ -7,7 +7,7 @@ import { processFile, isImageFile, formatBytes } from './images.js';
 import { SmartAI } from './smart.js';
 
 // Must match <meta name="app-version"> in index.html (tools/bump-version.mjs updates both).
-const APP_VERSION = '20261003-102040';
+const APP_VERSION = '20261003-102835';
 
 const $ = sel => document.querySelector(sel);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -332,7 +332,7 @@ function cardFor(img) {
     el.className = 'card';
     el.tabIndex = 0;
     el.dataset.id = img.id;
-    el.innerHTML = `<div class="card-media"><img alt="" loading="lazy" decoding="async" draggable="false"><button class="card-check" type="button" tabindex="-1" aria-label="Select photo">${icon('check')}</button></div><div class="card-caption"><span class="card-title"></span><span class="card-comments">${icon('comment')}<b></b></span></div>`;
+    el.innerHTML = `<div class="card-media"><img alt="" loading="lazy" decoding="async" draggable="false"><button class="card-check" type="button" tabindex="-1" aria-label="Select photo">${icon('check')}</button><button class="card-dl" type="button" tabindex="-1" aria-label="Download photo" title="Download">${icon('download')}</button></div><div class="card-caption"><span class="card-title"></span><span class="card-comments">${icon('comment')}<b></b></span></div>`;
     const im = el.querySelector('img');
     im.addEventListener('load', () => im.classList.add('loaded'));
     setImgSrc(im, img, 'thumb');
@@ -444,7 +444,8 @@ function renderSelection() {
   $('#selTag').hidden = inTrash;
   $('#selRestore').hidden = !inTrash;
   $('#selDelete span').textContent = inTrash ? 'Delete forever' : 'Delete';
-  for (const b of ['#selMove', '#selTag', '#selRestore', '#selDelete']) $(b).disabled = !n;
+  for (const b of ['#selMove', '#selTag', '#selRestore', '#selDelete', '#selDownload']) $(b).disabled = !n;
+  $('#selAll').hidden = n > 0 && n === currentList().length;
 }
 
 // ---- smart suggestions ----------------------------------------------------------
@@ -989,17 +990,52 @@ function addTags(ids, raw) {
   save(`Tag ${plural(ids.length, 'photo')}: ${tags.join(', ')}`, ops.addTags(ids, tags));
 }
 
+function fileNameFor(img) {
+  const base = (img.title || (img.originalName || '').replace(/\.[^.]+$/, '') || img.id).replace(/[\\/:*?"<>|]+/g, '_').trim();
+  return `${base || img.id}.${img.ext}`;
+}
+
+function saveBlob(blob, name) {
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: name });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 30_000);
+}
+
 async function download(img) {
-  const base = (img.title || (img.originalName || '').replace(/\.[^.]+$/, '') || img.id).replace(/[\\/:*?"<>|]+/g, '_');
+  if (!img) return;
   try {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(await fetchImageBlob(img, 'full'));
-    a.download = `${base}.${img.ext}`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+    saveBlob(await fetchImageBlob(img, 'full'), fileNameFor(img));
   } catch {
-    toast('Download failed.', 'error');
+    toast('Download failed. Check your connection and try again.', 'error');
   }
+}
+
+// Several photos at once: bundled into one .zip file.
+async function downloadMany(ids) {
+  const imgs = ids.map(findImage).filter(Boolean);
+  if (imgs.length < 2) return download(imgs[0]);
+  const { makeZip, uniqueNames } = await import('./zip.js');
+  const names = uniqueNames(imgs.map(fileNameFor));
+  const note = toast(`Preparing download… 0 of ${imgs.length}`, '', null, { sticky: true });
+  const blobs = new Array(imgs.length);
+  let next = 0, done = 0;
+  const worker = async () => {
+    while (next < imgs.length) {
+      const i = next++;
+      try { blobs[i] = await fetchImageBlob(imgs[i], 'full'); } catch {}
+      note.textContent = `Preparing download… ${++done} of ${imgs.length}`;
+    }
+  };
+  await Promise.all(Array.from({ length: 4 }, worker));
+  const files = imgs.map((_, i) => ({ name: names[i], blob: blobs[i] })).filter(f => f.blob);
+  note.remove();
+  if (!files.length) return toast('Download failed. Check your connection and try again.', 'error');
+  const label = { all: 'Artist Album', unsorted: 'Unsorted', trash: 'Trash' }[state.view] || folderName(state.view) || 'Artist Album';
+  saveBlob(await makeZip(files), `${label.replace(/[\\/:*?"<>|]+/g, '_')} (${plural(files.length, 'photo')}).zip`);
+  const missed = imgs.length - files.length;
+  toast(missed ? `Downloaded ${plural(files.length, 'photo')}; ${missed} could not be fetched.` : `Downloaded ${plural(files.length, 'photo')} as a ZIP file.`, missed ? 'error' : '');
 }
 
 async function copyText(text) {
@@ -1016,7 +1052,7 @@ async function copyText(text) {
 
 // ---- small UI helpers ---------------------------------------------------------
 
-function toast(msg, type = '', action) {
+function toast(msg, type = '', action, { sticky = false } = {}) {
   const el = document.createElement('div');
   el.className = `toast ${type}`;
   el.textContent = msg;
@@ -1026,7 +1062,8 @@ function toast(msg, type = '', action) {
     el.append(btn);
   }
   $('#toasts').append(el);
-  setTimeout(() => el.remove(), type === 'error' ? 8000 : action ? 7000 : 3500);
+  if (!sticky) setTimeout(() => el.remove(), type === 'error' ? 8000 : action ? 7000 : 3500);
+  return el;
 }
 
 let statusTimer;
@@ -1117,6 +1154,7 @@ function bindGrid() {
     const card = e.target.closest('.card');
     if (!card) return;
     const id = card.dataset.id;
+    if (e.target.closest('.card-dl')) return download(findImage(id));
     const selecting = e.target.closest('.card-check') || state.selecting || state.selected.size || e.shiftKey || e.metaKey || e.ctrlKey;
     if (selecting && canEdit()) {
       state.selected.has(id) ? state.selected.delete(id) : state.selected.add(id);
@@ -1362,6 +1400,12 @@ function bindBoard() {
     renderAll();
   });
   $('#selDelete').addEventListener('click', deleteSelected);
+  $('#selAll').addEventListener('click', () => {
+    for (const img of currentList()) state.selected.add(img.id);
+    state.selecting = true;
+    renderAll();
+  });
+  $('#selDownload').addEventListener('click', () => downloadMany(currentList().filter(i => state.selected.has(i.id)).map(i => i.id)));
   $('#selClear').addEventListener('click', () => {
     state.selected.clear();
     state.selecting = false;
