@@ -88,6 +88,19 @@ async function encode(source, sw, sh, w, h, quality) {
   return { blob, ext: webp ? 'webp' : 'jpg' };
 }
 
+// Just a small preview (used for the Drawings vault).
+export async function makeThumb(blob, width = 480) {
+  const decoded = await decode(blob);
+  try {
+    const { source, width: w0, height: h0 } = decoded;
+    const w = Math.min(width, w0);
+    const h = Math.max(1, Math.round((h0 * w) / w0));
+    return (await encode(source, w0, h0, w, h, CONFIG.thumbQuality)).blob;
+  } finally {
+    decoded.close();
+  }
+}
+
 const KEEPABLE = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
 
 // Returns { full, ext, thumb, thumbExt, w, h } where full/thumb are Blobs.

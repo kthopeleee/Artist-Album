@@ -25,6 +25,9 @@ export const CONFIG = {
   warnAt: 0.85,
 
   pageSize: 50, // cards rendered per scroll batch
+
+  // Drawings vault: a separate PRIVATE repo (same owner) for drawing files.
+  vaultRepo: 'Artist-Album-Drawings',
 };
 
 export function resolveRepo() {

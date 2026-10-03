@@ -225,6 +225,42 @@ To prevent it:
 - **Make rendering fail-safe:** render each part in its own try/catch, so a UI glitch never blocks loading the album or saving.
 - **Ship `tools/bump-version.mjs`,** which sets a new V in both files.
 
+## Big uploads (100+ photos at once)
+- **Process and commit in batches of 8 photos.** Each batch is its own commit; its photos appear on the board as soon as the batch is ready. Keep at most 2 batches waiting, so memory stays low.
+- **Retry failed rows:** the upload panel lists every file. Failed rows get a "Retry failed" button that re-commits the already-processed photos.
+- **Warn in `beforeunload`** while an upload is running.
+- **Pace every write request** (POST/PATCH) through a shared sliding window of 70 per minute, to stay under GitHub's ~80 content-creating requests per minute.
+- **Retry by themselves:**
+  - network errors and 5xx responses, with backoff, up to 4 times;
+  - 429, or 403 "secondary rate limit": wait `Retry-After`, or until `x-ratelimit-reset`, or 60 s × attempt, up to 6 times and 20 minutes. Tell the user with a toast.
+
+## Drawings vault (private files, optional password + Touch ID)
+- **Storage:** a separate **private** repo `<OWNER>/<REPO>-Drawings`, so private files are never in the public Pages repo.
+  - It is set up once on GitHub. The user adds it to their fine-grained token; show those steps when the repo returns 404.
+  - Sidebar entry "Drawings", for editors only. The view replaces the board; there is an "Upload files" button, and files dropped on the view or on its sidebar entry go to the vault.
+- **Layout:**
+  - `vault.json` holds the file list.
+  - `files/<id>/part-<n>` holds each file in 16 MB parts (the API allows 100 MB per blob).
+  - `files/<id>/preview` holds a 480 px preview, when there is one.
+  - Upload parts lazily (`{ path, getBlob }`) so huge files never sit in memory twice.
+- **Previews:**
+  - Images: resize directly.
+  - `.procreate` files: read `QuickLook/Thumbnail.png` out of the ZIP by reading only the central directory and that entry. Use `DecompressionStream('deflate-raw')`, and handle ZIP64.
+- **Password lock (optional, chosen at setup; can be turned on or off later):**
+  - A random AES-256-GCM vault key encrypts every part, the previews, and the file list. When locked, `vault.json` = `{ lock, data }`, so names are hidden.
+  - Each part uses `id:n` as GCM additional data.
+  - The password wraps the vault key: PBKDF2-SHA256, 600k rounds, random salt.
+  - A wrong password fails the GCM check, so show "Wrong password".
+  - Changing the password re-wraps the key only.
+  - Turning the lock on or off re-writes every part. **Never hard-code or store the password.**
+  - Commit messages must not contain file names while locked.
+  - Auto-lock after 15 minutes hidden.
+- **Touch ID per device (WebAuthn platform authenticator, user verification required):**
+  - With the **PRF** extension (Safari/Chrome): HKDF(PRF output) wraps the vault key, stored in `localStorage`.
+  - Without PRF (Firefox): store a non-extractable copy of the key in IndexedDB, and require a WebAuthn assertion before using it. Tell the user honestly that this is a lock screen, not fingerprint-bound encryption.
+- **Delete** commits the removal, then compacts the vault repo's history to free space.
+- **Downloads** fetch each part via the contents API (`Accept: application/vnd.github.raw+json`), decrypt, join, and save with the original name.
+
 ## Look and feel
 - Warm off-white background and white surfaces; a serif display font for headings and system sans for body text.
 - 16 px rounded cards with a subtle darkening on hover, and a round select check in the corner.
@@ -272,4 +308,7 @@ To prevent it:
    - Trash a photo, Undo, trash again, then Empty trash: the files are gone and history is a single commit.
    - Check the phone width has no horizontal scroll, including the suggestion panel.
    - Check there are no console errors.
+   - Upload 100 photos against a fake that enforces 80 writes per minute and fails 3% of writes: all 100 must be saved.
+   - Vault: no-access screen → setup with a password → upload a .procreate file, a 40 MB file and a PNG. Check that names are hidden and parts are encrypted in the repo, and that the 40 MB file downloads byte-identical. Then rename, delete (history compacted), wrong password, change password, lock off (plaintext) and lock on again.
+   - Touch ID with Chrome's virtual authenticator (CDP `WebAuthn.addVirtualAuthenticator`), with `hasPrf` both true and false.
 4. **Before relying on the quantized model, compare the browser's embeddings with Node's fp32 ones** (cosine ≈ 1). The quantized vision model fails this check.

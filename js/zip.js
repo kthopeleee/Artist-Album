@@ -90,3 +90,52 @@ export async function makeZip(files) {
 
   return new Blob([...local, ...central, end], { type: 'application/zip' });
 }
+
+// Reads one file out of a .zip without loading the whole thing (Procreate
+// files are zips with a preview at QuickLook/Thumbnail.png). Returns a Blob or null.
+export async function readZipEntry(blob, wanted) {
+  const slice = async (start, end) => new DataView(await blob.slice(start, end).arrayBuffer());
+  const tailSize = Math.min(blob.size, 22 + 0xffff);
+  const tail = await slice(blob.size - tailSize, blob.size);
+  let eocd = -1;
+  for (let i = tailSize - 22; i >= 0; i--) if (tail.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  if (eocd < 0) return null;
+  let cdSize = tail.getUint32(eocd + 12, true);
+  let cdOffset = tail.getUint32(eocd + 16, true);
+  if (cdOffset === 0xffffffff && eocd >= 20 && tail.getUint32(eocd - 20, true) === 0x07064b50) {
+    const z64 = await slice(Number(tail.getBigUint64(eocd - 12, true)), Number(tail.getBigUint64(eocd - 12, true)) + 56);
+    cdSize = Number(z64.getBigUint64(40, true));
+    cdOffset = Number(z64.getBigUint64(48, true));
+  }
+  const cd = await slice(cdOffset, cdOffset + cdSize);
+  const dec = new TextDecoder();
+  for (let p = 0; p + 46 <= cd.byteLength && cd.getUint32(p, true) === 0x02014b50;) {
+    const method = cd.getUint16(p + 10, true);
+    let size = cd.getUint32(p + 20, true);
+    const usize = cd.getUint32(p + 24, true);
+    const nameLen = cd.getUint16(p + 28, true), extraLen = cd.getUint16(p + 30, true), commentLen = cd.getUint16(p + 32, true);
+    let offset = cd.getUint32(p + 42, true);
+    const name = dec.decode(new Uint8Array(cd.buffer, cd.byteOffset + p + 46, nameLen));
+    if (name === wanted) {
+      // ZIP64: real sizes/offset live in the 0x0001 extra field
+      for (let e = p + 46 + nameLen; e + 4 <= p + 46 + nameLen + extraLen;) {
+        const id = cd.getUint16(e, true), len = cd.getUint16(e + 2, true);
+        if (id === 1) {
+          let q = e + 4;
+          if (usize === 0xffffffff) q += 8;
+          if (size === 0xffffffff) { size = Number(cd.getBigUint64(q, true)); q += 8; }
+          if (offset === 0xffffffff) offset = Number(cd.getBigUint64(q, true));
+        }
+        e += 4 + len;
+      }
+      const local = await slice(offset, offset + 30);
+      const start = offset + 30 + local.getUint16(26, true) + local.getUint16(28, true);
+      const data = blob.slice(start, start + size);
+      if (method === 0) return data;
+      if (method === 8) return new Response(data.stream().pipeThrough(new DecompressionStream('deflate-raw'))).blob();
+      return null;
+    }
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+  return null;
+}

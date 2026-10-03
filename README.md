@@ -14,6 +14,7 @@ A personal, Pinterest-style image board that lives entirely on GitHub. GitHub Pa
 - **Tags:** type them on a photo, or pick suggested ones. Click a tag on a photo, or in the tag bar above the board, to show only photos with that tag. Search covers titles, tags, comments and file names.
 - **Smart suggestions:** an AI that runs on your own device suggests tags for each photo and a folder for each Unsorted photo, for example "these look like Sketches" or "these look like Manga, make a new folder?".
 - **Trash:** deleting moves a photo to the Trash, where it can be restored. Emptying the Trash deletes the photos for good and actually frees the space.
+- **Drawings (private):** a separate place for your own drawing files: Procreate, PSD, Clip Studio, Krita, anything. They are kept in a **private** repo and never appear on the photo site. They can be locked with a password, plus Touch ID. See below.
 - **Phones:** use **Select**, or the folder menu inside a photo, to move things, since phones can't drag.
 
 ## Who can do what
@@ -33,6 +34,47 @@ A personal, Pinterest-style image board that lives entirely on GitHub. GitHub Pa
 ### Letting friends edit
 - **Quick way:** go to **Edit access** → *Let someone else edit* → **Copy invite link**. The link has your key built in, so anyone holding it can edit. To cancel every invite at once, delete the token on GitHub.
 - **Safer way:** add them as a collaborator (repo **Settings → Collaborators**), so they make their own key.
+
+## Uploading lots of photos
+
+You can drop in 100+ photos at once.
+- They're saved in batches of 8, and each batch appears on the board as soon as it's done.
+- The site paces itself to stay under GitHub's limit of about 80 saves a minute, so 100 photos take about 3 minutes. Keep the tab open; the site warns you if you try to leave mid-upload.
+- Network hiccups and GitHub errors are retried automatically.
+- If something still fails, the upload panel shows **Retry failed**.
+- GitHub also limits how much can be uploaded per hour (roughly 200 photos). If you go past that, the site waits and continues by itself.
+
+## Drawings: private files
+
+Click **Drawings** in the sidebar.
+
+**Where the files live:** in a separate **private** repository, [Artist-Album-Drawings](https://github.com/kthopeleee/Artist-Album-Drawings), not in this public one. Nobody without your GitHub key can see them, and they don't count toward the photo site's 1 GB.
+
+**One-time setup: give your key access to the private repo**
+1. Go to https://github.com/settings/personal-access-tokens.
+2. Click your **Artist Album** key, then **Edit**.
+3. Under **Repository access**, add **Artist-Album-Drawings**.
+4. Click **Update**.
+
+**What it can hold**
+- Any file type, at any size. Big files are stored in 16 MB parts automatically, because GitHub allows at most 100 MB per file.
+- Procreate files show their own preview picture.
+
+**Password lock (optional)**
+- Files are encrypted in your browser with AES-256 before they're uploaded.
+- File names are hidden too.
+- The password is never stored anywhere. If you forget it, locked files can't be recovered, so keep it somewhere safe.
+- A longer password is harder to guess.
+- The vault locks itself after 15 minutes away from the tab.
+
+**Touch ID**
+- After unlocking with the password, open **Drawings settings → Touch ID on this device → Turn on**.
+- In **Safari and Chrome**, your fingerprint itself protects the key.
+- **Firefox** doesn't support that yet, so there the key is kept in the browser and Touch ID guards it. Your password still protects the files on GitHub.
+
+**Deleting** a drawing frees its space right away, because the private repo's old history is cleared.
+
+**Invite links:** anyone you give an invite link to uses your key, so they can reach Drawings too. With the password lock on, they still can't open the files.
 
 ## Storage: the two limits
 

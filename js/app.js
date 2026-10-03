@@ -5,9 +5,10 @@ import {
 import { GitHubStore } from './github.js';
 import { processFile, isImageFile, formatBytes } from './images.js';
 import { SmartAI } from './smart.js';
+import { Vault } from './vault.js';
 
 // Must match <meta name="app-version"> in index.html (tools/bump-version.mjs updates both).
-const APP_VERSION = '20261003-102835';
+const APP_VERSION = '20261003-145547';
 
 const $ = sel => document.querySelector(sel);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -33,7 +34,7 @@ const myName = () => prefs.get('name') || prefs.get('login');
 
 const repo = resolveRepo();
 const gh = new GitHubStore(repo, prefs.get('token'));
-gh.onWait = ms => toast(`GitHub asked us to slow down. Continuing in ${Math.round(ms / 1000)} seconds…`);
+gh.onWait = ms => toast(`GitHub asked us to slow down. Continuing by itself in ${ms >= 90_000 ? `${Math.round(ms / 60_000)} minutes` : `${Math.round(ms / 1000)} seconds`}… Keep this tab open.`, '', null, { duration: Math.min(ms, 15_000) });
 
 // ---- state ------------------------------------------------------------------
 
@@ -66,8 +67,13 @@ const smart = new SmartAI({
   onChange: () => safely(renderSuggestions, renderLightboxSmart, renderSettingsAI),
 });
 
+const vault = new Vault({
+  owner: repo.owner, token: () => gh.token, myName,
+  toast: (...a) => toast(...a), ask: o => ask(o), uploadPanel: (...a) => uploadPanel(...a), saveBlob: (...a) => saveBlob(...a),
+});
+
 const canEdit = () => !!gh.token;
-const isFolderView = v => v !== 'all' && v !== 'unsorted' && v !== 'trash';
+const isFolderView = v => v !== 'all' && v !== 'unsorted' && v !== 'trash' && v !== 'vault';
 const folderName = id => state.album.folders.find(f => f.id === id)?.name;
 const findImage = id => state.album.images.find(i => i.id === id);
 const currentList = () => visibleImages(state.album, state.view, state.query, state.view === 'trash' ? [] : state.tags);
@@ -186,7 +192,10 @@ function renderAll() {
   for (const id of state.selected) if (!currentList().some(i => i.id === id)) state.selected.delete(id);
   document.body.classList.toggle('can-edit', canEdit());
   document.body.classList.toggle('selecting', canEdit() && (state.selecting || state.selected.size > 0));
-  safely(renderSidebar, renderHeader, renderTagBar, renderNotice, renderSuggestions, renderGrid, renderSelection, renderLightbox);
+  document.body.classList.toggle('in-vault', state.view === 'vault');
+  $('#vaultView').hidden = state.view !== 'vault';
+  safely(renderSidebar, renderHeader, renderTagBar, renderNotice, renderSuggestions, renderGrid, renderSelection, renderLightbox,
+    () => state.view === 'vault' && vault.render());
 }
 
 let errorShown = false;
@@ -233,7 +242,9 @@ function renderSidebar() {
   const counts = folderCounts(state.album);
   for (const btn of document.querySelectorAll('.nav > .nav-item')) {
     btn.classList.toggle('active', btn.dataset.view === state.view);
-    btn.querySelector('.count').textContent = state.loaded ? counts[btn.dataset.view] || (btn.dataset.view === 'trash' ? '' : 0) : '';
+    const view = btn.dataset.view;
+    btn.querySelector('.count').textContent = view === 'vault' ? (vault.doc ? vault.doc.items.length : '')
+      : state.loaded ? counts[view] || (view === 'trash' ? '' : 0) : '';
   }
   $('#trashNav').hidden = !canEdit() && !counts.trash;
 
@@ -284,7 +295,8 @@ function renderSidebar() {
 }
 
 function renderHeader() {
-  const title = { all: 'All photos', unsorted: 'Unsorted', trash: 'Trash' }[state.view] || folderName(state.view) || '';
+  const title = { all: 'All photos', unsorted: 'Unsorted', trash: 'Trash', vault: 'Drawings' }[state.view] || folderName(state.view) || '';
+  $('#addBtn span').textContent = state.view === 'vault' ? 'Upload files' : 'Add photos';
   $('#viewTitle').textContent = title;
   document.title = state.view === 'all' ? 'Artist Album' : `${title} · Artist Album`;
   $('#viewCount').textContent = state.loaded ? plural(currentList().length, 'photo') : '';
@@ -772,6 +784,7 @@ function setView(view) {
   history.replaceState(history.state, '', hashUrl());
   $('#app').classList.remove('nav-open');
   renderAll();
+  if (view === 'vault') vault.open();
 }
 
 function setTags(tags) {
@@ -810,89 +823,130 @@ function siteUrl() {
 
 // ---- actions ------------------------------------------------------------------
 
+// Big uploads go in small batches: each batch of photos is its own commit, so
+// photos appear (and are safe) as they go, and one hiccup can't lose the rest.
+const BATCH = 8;
+
+async function prepareImage(file, folder) {
+  const out = await processFile(file);
+  const rec = {
+    id: uid('i'), folder, title: '', w: out.w, h: out.h,
+    bytes: out.full.size, thumbBytes: out.thumb.size, ext: out.ext, thumbExt: out.thumbExt,
+    originalName: file.name || 'Pasted image', addedAt: new Date().toISOString(), addedBy: myName(),
+    tags: [], comments: [], trashedAt: null,
+  };
+  const paths = imagePaths(rec);
+  localUrls.set(rec.id, { full: URL.createObjectURL(out.full), thumb: URL.createObjectURL(out.thumb) });
+  return {
+    rec, thumb: out.thumb,
+    files: [{ path: paths.full, blob: out.full }, { path: paths.thumb, blob: out.thumb }],
+    note: out.full === file ? formatBytes(file.size) : `${formatBytes(file.size)} → ${formatBytes(out.full.size)}`,
+  };
+}
+
 async function addFiles(fileList, folderOverride) {
   const all = [...fileList];
   const files = all.filter(isImageFile);
   if (!files.length) {
-    if (all.length) toast('Only image files can be added.', 'error');
+    if (all.length) toast('Only image files can be added. (Procreate and other drawing files go in Drawings.)', 'error');
     return;
   }
   if (!requireKey()) return;
   const folder = folderOverride !== undefined ? folderOverride : isFolderView(state.view) ? state.view : null;
-  const panel = uploadPanel(files);
-  const records = [];
-  const blobs = [];
-  const thumbs = new Map();
+  const panel = uploadPanel(files.map(f => f.name || 'Pasted image'), 'photo');
+  const inflight = [];
 
-  for (const [i, file] of files.entries()) {
-    panel.update(i, 'Shrinking…');
-    try {
-      const out = await processFile(file);
-      const rec = {
-        id: uid('i'), folder, title: '', w: out.w, h: out.h,
-        bytes: out.full.size, thumbBytes: out.thumb.size, ext: out.ext, thumbExt: out.thumbExt,
-        originalName: file.name || 'Pasted image', addedAt: new Date().toISOString(), addedBy: myName(),
-        tags: [], comments: [], trashedAt: null,
-      };
-      const paths = imagePaths(rec);
-      blobs.push({ path: paths.full, blob: out.full }, { path: paths.thumb, blob: out.thumb });
-      localUrls.set(rec.id, { full: URL.createObjectURL(out.full), thumb: URL.createObjectURL(out.thumb) });
-      thumbs.set(rec.id, out.thumb);
-      records.push(rec);
-      panel.update(i, out.full === file ? formatBytes(file.size) : `${formatBytes(file.size)} → ${formatBytes(out.full.size)}`, 'ok');
-    } catch (e) {
-      panel.update(i, e.message || 'Could not read this image.', 'error');
+  for (let start = 0; start < files.length; start += BATCH) {
+    const batch = [];
+    for (let i = start; i < Math.min(start + BATCH, files.length); i++) {
+      panel.update(i, 'Shrinking…');
+      try {
+        const item = await prepareImage(files[i], folder);
+        batch.push({ ...item, row: i });
+        panel.update(i, `${item.note} · waiting`);
+      } catch (e) {
+        panel.fail(i, e.message || 'Could not read this image.');
+      }
     }
-    panel.progress(((i + 1) / files.length) * 0.3);
+    if (!batch.length) continue;
+    // Keep at most two batches waiting, so memory stays low on huge uploads.
+    if (inflight.length >= 2) await inflight.shift();
+    inflight.push(uploadBatch(batch, panel));
+    for (const b of batch) smart.add(b.rec.id, b.thumb); // suggestions are ready by the time it's uploaded
   }
-  if (!records.length) {
-    panel.finish('Nothing was added', true);
-    return;
-  }
-
-  panel.title(`Uploading ${plural(records.length, 'photo')}…`);
-  const saving = save(`Add ${plural(records.length, 'photo')}`, ops.addImages(records), {
-    files: blobs,
-    onProgress: (done, total) => {
-      panel.progress(0.3 + (0.65 * done) / Math.max(1, total));
-      panel.title(done < total ? `Uploading ${Math.min(records.length, Math.floor(done / 2) + 1)} of ${records.length}…` : 'Saving…');
-    },
-  });
-  for (const [id, blob] of thumbs) smart.add(id, blob); // suggestions are ready by the time it's uploaded
-  const ok = await saving;
-  panel.finish(ok ? `Added ${plural(records.length, 'photo')}` : 'Upload failed', !ok || records.length < files.length);
+  await Promise.all(inflight);
+  panel.finish();
 }
 
+async function uploadBatch(batch, panel) {
+  for (const b of batch) panel.update(b.row, 'Uploading…');
+  const ok = await save(`Add ${plural(batch.length, 'photo')}`, ops.addImages(batch.map(b => b.rec)), {
+    files: batch.flatMap(b => b.files),
+    onProgress: (done, total) => panel.partial(batch.map(b => b.row), done / Math.max(1, total)),
+  });
+  for (const b of batch) {
+    if (ok) panel.done(b.row, `${b.note} · saved`);
+    else panel.fail(b.row, 'Not saved', () => uploadBatch([b], panel));
+  }
+  return ok;
+}
+
+// The progress panel for uploads (photos and drawings). Rows that fail get a
+// "Retry failed" button instead of making you start over.
 let activeUploads = 0;
-function uploadPanel(files) {
+function uploadPanel(names, noun) {
   const panel = $('#uploadPanel');
   const list = $('#uploadList');
   clearTimeout(panel.hideTimer);
   if (!activeUploads) list.replaceChildren();
   activeUploads++;
   panel.hidden = false;
-  $('#uploadTitle').textContent = `Preparing ${plural(files.length, 'photo')}…`;
-  $('#uploadBar').style.width = '0';
-  const rows = files.map(f => {
+  const total = names.length;
+  const saved = new Set();
+  const failed = new Map(); // row -> retry fn
+  const partial = new Map();
+  const rows = names.map(name => {
     const li = document.createElement('li');
     li.innerHTML = '<span class="fname"></span><span class="fstate">Waiting</span>';
-    li.firstChild.textContent = f.name || 'Pasted image';
+    li.firstChild.textContent = name;
     return li;
   });
   list.append(...rows);
+  const retryBtn = $('#uploadRetry');
+  const refresh = () => {
+    const p = (saved.size + [...partial.values()].reduce((a, b) => a + b, 0)) / total;
+    $('#uploadBar').style.width = `${Math.round(Math.min(1, p) * 100)}%`;
+    $('#uploadTitle').textContent = finished
+      ? (failed.size ? `Saved ${saved.size} of ${plural(total, noun)}. ${failed.size} failed` : `Added ${plural(saved.size, noun)}`)
+      : `Uploading… ${saved.size} of ${plural(total, noun)} saved`;
+    retryBtn.hidden = !finished || !failed.size;
+  };
+  let finished = false;
+  const set = (i, text, cls = '') => {
+    rows[i].className = cls;
+    rows[i].lastChild.textContent = text;
+    rows[i].lastChild.title = text;
+  };
+  retryBtn.onclick = async () => {
+    const jobs = [...failed.values()];
+    failed.clear();
+    finished = false;
+    refresh();
+    for (const job of jobs) await job?.();
+    finished = true;
+    refresh();
+  };
+  refresh();
   return {
-    update(i, text, cls = '') {
-      rows[i].className = cls;
-      rows[i].lastChild.textContent = text;
-      rows[i].lastChild.title = text;
-    },
-    progress(p) { $('#uploadBar').style.width = `${Math.round(p * 100)}%`; },
-    title(t) { $('#uploadTitle').textContent = t; },
-    finish(t, keepOpen) {
+    update(i, text) { set(i, text); },
+    partial(idx, p) { for (const i of idx) partial.set(i, p); refresh(); },
+    done(i, text) { partial.delete(i); failed.delete(i); saved.add(i); set(i, text, 'ok'); refresh(); },
+    fail(i, text, retry) { partial.delete(i); if (retry) failed.set(i, retry); set(i, text, 'error'); refresh(); },
+    finish() {
       activeUploads--;
-      this.title(t);
-      this.progress(1);
-      if (!keepOpen && !activeUploads) panel.hideTimer = setTimeout(() => { panel.hidden = true; }, 4000);
+      finished = true;
+      refresh();
+      if (!failed.size && !activeUploads && !rows.some(r => r.className === 'error')) panel.hideTimer = setTimeout(() => { panel.hidden = true; }, 4000);
     },
   };
 }
@@ -1052,7 +1106,7 @@ async function copyText(text) {
 
 // ---- small UI helpers ---------------------------------------------------------
 
-function toast(msg, type = '', action, { sticky = false } = {}) {
+function toast(msg, type = '', action, { sticky = false, duration } = {}) {
   const el = document.createElement('div');
   el.className = `toast ${type}`;
   el.textContent = msg;
@@ -1062,7 +1116,7 @@ function toast(msg, type = '', action, { sticky = false } = {}) {
     el.append(btn);
   }
   $('#toasts').append(el);
-  if (!sticky) setTimeout(() => el.remove(), type === 'error' ? 8000 : action ? 7000 : 3500);
+  if (!sticky) setTimeout(() => el.remove(), duration || (type === 'error' ? 8000 : action ? 7000 : 3500));
   return el;
 }
 
@@ -1220,7 +1274,7 @@ function bindSidebar() {
   sidebar.addEventListener('dragover', e => {
     const item = e.target.closest('.nav-item');
     if (dragHas(e, IMG_DRAG)) {
-      if (!item || item.dataset.view === 'all') return markOnly(null, 'drop-target');
+      if (!item || item.dataset.view === 'all' || item.dataset.view === 'vault') return markOnly(null, 'drop-target');
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
       markOnly(item, 'drop-target');
@@ -1237,7 +1291,7 @@ function bindSidebar() {
   sidebar.addEventListener('drop', e => {
     const item = e.target.closest('.nav-item');
     if (dragHas(e, IMG_DRAG)) {
-      if (!item || item.dataset.view === 'all') return;
+      if (!item || item.dataset.view === 'all' || item.dataset.view === 'vault') return;
       e.preventDefault();
       const ids = dragIds;
       const target = item.dataset.view;
@@ -1268,9 +1322,13 @@ function bindFileDrop() {
   let depth = 0;
   const hasFiles = e => dragHas(e, 'Files');
   const overlay = $('#dropOverlay');
+  const toVault = e => {
+    const item = e.target.closest?.('.nav-item');
+    return item ? item.dataset.view === 'vault' : state.view === 'vault';
+  };
   const targetFolder = e => {
     const item = e.target.closest?.('.nav-item');
-    if (!item || item.dataset.view === 'all' || item.dataset.view === 'trash') return undefined;
+    if (!item || ['all', 'trash', 'vault'].includes(item.dataset.view)) return undefined;
     return item.dataset.view === 'unsorted' ? null : item.dataset.view;
   };
   const hide = () => { depth = 0; overlay.hidden = true; markOnly(null, 'drop-target'); };
@@ -1287,8 +1345,8 @@ function bindFileDrop() {
     e.dataTransfer.dropEffect = 'copy';
     const t = targetFolder(e);
     const folder = t !== undefined ? t : isFolderView(state.view) ? state.view : null;
-    $('#dropTarget').textContent = folder ? folderName(folder) : 'Unsorted';
-    markOnly(t !== undefined ? e.target.closest('.nav-item') : null, 'drop-target');
+    $('#dropTarget').textContent = toVault(e) ? 'Drawings (private)' : folder ? folderName(folder) : 'Unsorted';
+    markOnly(t !== undefined || e.target.closest?.('.nav-item')?.dataset.view === 'vault' ? e.target.closest('.nav-item') : null, 'drop-target');
   });
   window.addEventListener('dragleave', e => {
     if (!hasFiles(e)) return;
@@ -1298,12 +1356,16 @@ function bindFileDrop() {
     if (!hasFiles(e)) return;
     e.preventDefault();
     const folder = targetFolder(e);
+    const vaultDrop = toVault(e);
     hide();
-    addFiles(e.dataTransfer.files, folder);
+    if (!vaultDrop) return addFiles(e.dataTransfer.files, folder);
+    if (!requireKey()) return;
+    if (state.view !== 'vault') setView('vault');
+    vault.open().then(() => vault.upload(e.dataTransfer.files));
   });
 
   document.addEventListener('paste', e => {
-    if (e.target.closest?.('input, textarea')) return;
+    if (e.target.closest?.('input, textarea') || state.view === 'vault') return;
     const files = [...(e.clipboardData?.files || [])];
     if (!files.length) return;
     e.preventDefault();
@@ -1312,7 +1374,12 @@ function bindFileDrop() {
 }
 
 function bindBoard() {
-  const pick = () => { if (requireKey()) $('#fileInput').click(); };
+  const pick = () => { if (requireKey()) $(state.view === 'vault' ? '#vaultInput' : '#fileInput').click(); };
+  $('#vaultInput').addEventListener('change', e => {
+    vault.upload(e.target.files);
+    e.target.value = '';
+  });
+  vault.bind($('#vaultView'), () => $('#vaultInput').click());
   $('#addBtn').addEventListener('click', pick);
   $('#empty').addEventListener('click', e => { if (e.target.closest('[data-action="add"]')) pick(); });
   $('#fileInput').addEventListener('change', e => {
@@ -1347,6 +1414,7 @@ function bindBoard() {
     setView('all');
   });
   $('#emptyTrashBtn').addEventListener('click', () => purge(trashedIds()));
+  $('#uploadClose').addEventListener('click', () => { $('#uploadPanel').hidden = true; });
 
   $('#tagChips').addEventListener('click', e => {
     if (e.target.closest('[data-clear-tags]')) return setTags([]);
@@ -1570,6 +1638,8 @@ function bindSettings() {
       prefs.set('token', token);
       prefs.set('login', login);
       setSettingsMsg('Key saved. Editing is unlocked.', 'ok');
+      vault.status = 'idle';
+      if (state.view === 'vault') vault.open();
       commentsKey = '';
       if (smart.enabled) smart.start(state.album);
       renderAll();
@@ -1582,6 +1652,8 @@ function bindSettings() {
     gh.token = '';
     prefs.set('token', '');
     prefs.set('login', '');
+    vault.lockNow();
+    vault.status = 'idle';
     state.selecting = false;
     state.selected.clear();
     commentsKey = '';
@@ -1657,7 +1729,7 @@ function bindGlobal() {
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
   setInterval(() => { if (!document.hidden && canEdit()) refresh(); }, 90_000);
   window.addEventListener('beforeunload', e => {
-    if (pending.length) { e.preventDefault(); e.returnValue = ''; }
+    if (pending.length || activeUploads) { e.preventDefault(); e.returnValue = ''; }
   });
 }
 
@@ -1710,6 +1782,7 @@ function init() {
       history.replaceState(null, '', hashUrl());
     }
     if (smart.enabled && canEdit()) smart.start(state.album);
+    if (state.view === 'vault') vault.open();
     if (h.key) {
       gh.verify()
         .then(({ login }) => {
