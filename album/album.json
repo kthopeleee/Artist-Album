@@ -1,5 +1,12 @@
 {
  "version": 1,
- "folders": [],
- "images": []
+ "folders": [
+  {
+   "id": "f_musfi8u7yve7rb",
+   "name": "Test",
+   "createdAt": "2026-10-03T13:29:39.452Z"
+  }
+ ],
+ "images": [],
+ "updatedAt": "2026-10-03T13:29:39.452Z"
 }
