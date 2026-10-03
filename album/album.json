@@ -7,30 +7,6 @@
    "createdAt": "2026-10-03T13:29:39.452Z"
   }
  ],
- "images": [
-  {
-   "id": "i_musfi9zauov18a",
-   "folder": null,
-   "title": "",
-   "w": 2400,
-   "h": 1600,
-   "bytes": 19830,
-   "thumbBytes": 2238,
-   "ext": "webp",
-   "thumbExt": "webp",
-   "originalName": "live-test.png",
-   "addedAt": "2026-10-03T13:29:40.102Z",
-   "addedBy": "Setup test",
-   "comments": [
-    {
-     "id": "c_musficjog2j8bs",
-     "author": "Setup test",
-     "text": "Live test comment",
-     "at": "2026-10-03T13:29:43.428Z",
-     "editedAt": null
-    }
-   ]
-  }
- ],
- "updatedAt": "2026-10-03T13:29:53.129Z"
+ "images": [],
+ "updatedAt": "2026-10-03T13:29:55.280Z"
 }
