@@ -1,6 +1,22 @@
 {
  "version": 1,
  "folders": [],
- "images": [],
- "updatedAt": "2026-10-03T13:30:38.268Z"
+ "images": [
+  {
+   "id": "i_musfq9s7mfygsp",
+   "folder": null,
+   "title": "",
+   "w": 600,
+   "h": 1026,
+   "bytes": 368799,
+   "thumbBytes": 21086,
+   "ext": "png",
+   "thumbExt": "webp",
+   "originalName": "Screenshot 2025-01-09 at 8.32.36 AM.png",
+   "addedAt": "2026-10-03T13:35:53.095Z",
+   "addedBy": "Katie Lee",
+   "comments": []
+  }
+ ],
+ "updatedAt": "2026-10-03T13:35:54.235Z"
 }
