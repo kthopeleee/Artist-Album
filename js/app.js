@@ -6,6 +6,9 @@ import { GitHubStore } from './github.js';
 import { processFile, isImageFile, formatBytes } from './images.js';
 import { SmartAI } from './smart.js';
 
+// Must match <meta name="app-version"> in index.html (tools/bump-version.mjs updates both).
+const APP_VERSION = '20261003-102040';
+
 const $ = sel => document.querySelector(sel);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -60,7 +63,7 @@ const saveDismissed = () => prefs.set('dismissed', JSON.stringify([...dismissed]
 
 const smart = new SmartAI({
   getThumb: img => fetchImageBlob(img, 'thumb'),
-  onChange: () => { renderSuggestions(); renderLightboxSmart(); renderSettingsAI(); },
+  onChange: () => safely(renderSuggestions, renderLightboxSmart, renderSettingsAI),
 });
 
 const canEdit = () => !!gh.token;
@@ -167,6 +170,14 @@ async function fetchImageBlob(img, kind) {
 
 // ---- rendering ----------------------------------------------------------------
 
+// Each part renders on its own, so a glitch in one never stops the album from
+// loading or a save from going through.
+function safely(...parts) {
+  for (const part of parts) {
+    try { part(); } catch (e) { reportError(e); }
+  }
+}
+
 function renderAll() {
   if (state.loaded && isFolderView(state.view) && !folderName(state.view)) {
     state.view = 'all';
@@ -175,14 +186,15 @@ function renderAll() {
   for (const id of state.selected) if (!currentList().some(i => i.id === id)) state.selected.delete(id);
   document.body.classList.toggle('can-edit', canEdit());
   document.body.classList.toggle('selecting', canEdit() && (state.selecting || state.selected.size > 0));
-  renderSidebar();
-  renderHeader();
-  renderTagBar();
-  renderNotice();
-  renderSuggestions();
-  renderGrid();
-  renderSelection();
-  renderLightbox();
+  safely(renderSidebar, renderHeader, renderTagBar, renderNotice, renderSuggestions, renderGrid, renderSelection, renderLightbox);
+}
+
+let errorShown = false;
+function reportError(err) {
+  console.error(err);
+  if (errorShown) return;
+  errorShown = true;
+  toast('Something on this page went wrong. If it keeps happening, refresh with Cmd+Shift+R (Ctrl+Shift+R on Windows).', 'error');
 }
 
 // Image sources in order of preference: the local copy (just uploaded), the
@@ -1607,7 +1619,28 @@ function bindGlobal() {
 
 // ---- start ------------------------------------------------------------------------
 
+// If the browser served an older cached page with this newer code (or the other
+// way round), reload once to get matching files instead of breaking.
+function versionMismatch() {
+  const page = document.querySelector('meta[name="app-version"]')?.content;
+  if (page === APP_VERSION) return false;
+  const key = 'artist-album.reloaded-for';
+  let tried = '';
+  try { tried = sessionStorage.getItem(key) || ''; } catch {}
+  if (tried === APP_VERSION) {
+    document.body.insertAdjacentHTML('afterbegin',
+      '<p style="margin:0;padding:12px 16px;background:#c0392b;color:#fff;font:15px system-ui">The site was just updated. Please refresh with Cmd+Shift+R (Ctrl+Shift+R on Windows).</p>');
+    return true;
+  }
+  try { sessionStorage.setItem(key, APP_VERSION); } catch {}
+  fetch(location.pathname, { cache: 'reload' }).catch(() => {}).finally(() => location.reload());
+  return true;
+}
+
 function init() {
+  if (versionMismatch()) return;
+  window.addEventListener('error', e => reportError(e.error || e.message));
+  window.addEventListener('unhandledrejection', e => reportError(e.reason));
   const h = readHash();
   if (h.key) {
     gh.token = h.key;

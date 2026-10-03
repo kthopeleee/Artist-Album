@@ -213,6 +213,18 @@ GitHub refuses files over 100 MB and Pages sites are capped at 1 GB. Process eve
   3. `https://raw.githubusercontent.com/<OWNER>/<REPO>/main/<path>`, for the minute or so before Pages redeploys after a commit.
 - If all three fail, show an "Image missing" placeholder.
 
+## Caching (don't skip this)
+GitHub Pages sends `Cache-Control: max-age=600`. After an update, a browser can combine a new `index.html` with **old cached JS**, which crashes on missing elements, or an old page with new JS.
+
+To prevent it:
+- **Load every asset with a version query:** `css/style.css?v=V` and `js/app.js?v=V`.
+- **Version the modules through an import map** in `index.html`, which maps each `./js/x.js` to `./js/x.js?v=V`. Pass the same query to the Web Worker URL.
+- **Put `<meta name="app-version" content="V">` in the page and `const APP_VERSION = 'V'` in `app.js`.**
+  - On start, if they differ, fetch the page with `cache: 'reload'` and reload once, guarded by `sessionStorage`.
+  - If it still differs after that, show a "please hard-refresh" banner.
+- **Make rendering fail-safe:** render each part in its own try/catch, so a UI glitch never blocks loading the album or saving.
+- **Ship `tools/bump-version.mjs`,** which sets a new V in both files.
+
 ## Look and feel
 - Warm off-white background and white surfaces; a serif display font for headings and system sans for body text.
 - 16 px rounded cards with a subtle darkening on hover, and a round select check in the corner.

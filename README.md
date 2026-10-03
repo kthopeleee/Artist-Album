@@ -102,6 +102,18 @@ That regenerates [js/vocab.js](js/vocab.js).
 - **Several editors at once:** if two people save at the same moment, the second save is replayed on top of the first, so nothing is lost. This includes saves that land while the Trash is being emptied.
 - **New photos:** they appear instantly for the uploader. Everyone else sees them about a minute later, once GitHub Pages redeploys. Until then they load from raw.githubusercontent.com.
 
+## Updating the site's code
+
+GitHub Pages lets browsers keep files for 10 minutes. If a browser mixed an old cached file with a new page, the site could break. To prevent that, every CSS and JS file is loaded with a version tag (`?v=…`). The site also checks that the page and its code match, and refreshes itself once if they don't.
+
+**After changing anything in `css/` or `js/`, run:**
+
+```sh
+node tools/bump-version.mjs
+```
+
+**If the site ever looks broken right after an update,** press **Cmd+Shift+R** (Ctrl+Shift+R on Windows).
+
 ## Running locally
 
 ```sh

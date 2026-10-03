@@ -7,8 +7,23 @@
   <meta name="description" content="A personal image board stored on GitHub.">
   <meta name="color-scheme" content="light dark">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='3' width='11' height='15' rx='3' fill='%23d9482b'/%3E%3Crect x='18' y='3' width='11' height='9' rx='3' fill='%23e8a33d'/%3E%3Crect x='3' y='21' width='11' height='8' rx='3' fill='%233d7be8'/%3E%3Crect x='18' y='15' width='11' height='14' rx='3' fill='%2332a37f'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="css/style.css">
-  <script type="module" src="js/app.js"></script>
+  <!-- Every file is loaded with ?v=<version> so a browser can never mix old cached
+       code with a new page. After changing any CSS/JS, run: node tools/bump-version.mjs -->
+  <meta name="app-version" content="20261003-102040">
+  <link rel="preconnect" href="https://api.github.com" crossorigin>
+  <link rel="stylesheet" href="css/style.css?v=20261003-102040">
+  <script type="importmap">
+  { "imports": {
+    "./js/config.js": "./js/config.js?v=20261003-102040",
+    "./js/album.js": "./js/album.js?v=20261003-102040",
+    "./js/github.js": "./js/github.js?v=20261003-102040",
+    "./js/images.js": "./js/images.js?v=20261003-102040",
+    "./js/smart.js": "./js/smart.js?v=20261003-102040",
+    "./js/suggest.js": "./js/suggest.js?v=20261003-102040",
+    "./js/vocab.js": "./js/vocab.js?v=20261003-102040"
+  } }
+  </script>
+  <script type="module" src="js/app.js?v=20261003-102040"></script>
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">

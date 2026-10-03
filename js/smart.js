@@ -97,7 +97,8 @@ export class SmartAI {
       this.notify(true);
       this.lib = await import('./suggest.js');
       this.emb = await loadCache();
-      this.worker = new Worker(new URL('./ai-worker.js', import.meta.url), { type: 'module' });
+      // Same ?v= version as this file, so the worker is never an older cached copy.
+      this.worker = new Worker(new URL(`./ai-worker.js${new URL(import.meta.url).search}`, import.meta.url), { type: 'module' });
       this.worker.onmessage = ({ data }) => this.onMessage(data);
       this.worker.onerror = e => this.fail(e.message || 'The AI worker crashed.');
       await this.call({ type: 'init' });
