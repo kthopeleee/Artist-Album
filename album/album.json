@@ -10,6 +10,11 @@
    "id": "f_musih85kw2yozv",
    "name": "Manga",
    "createdAt": "2026-10-03T14:52:50.508Z"
+  },
+  {
+   "id": "f_musihy2gs8fj0d",
+   "name": "Sticker Icon Ideas",
+   "createdAt": "2026-10-03T14:53:24.168Z"
   }
  ],
  "images": [
@@ -48,5 +53,5 @@
    "trashedAt": null
   }
  ],
- "updatedAt": "2026-10-03T14:52:50.508Z"
+ "updatedAt": "2026-10-03T14:53:24.168Z"
 }
