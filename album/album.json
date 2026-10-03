@@ -19,6 +19,57 @@
  ],
  "images": [
   {
+   "id": "i_musism6ahzw0yn",
+   "folder": null,
+   "title": "",
+   "w": 435,
+   "h": 328,
+   "bytes": 224777,
+   "thumbBytes": 10334,
+   "ext": "png",
+   "thumbExt": "webp",
+   "originalName": "Screenshot 2026-01-30 at 10.46.39 PM.png",
+   "addedAt": "2026-10-03T15:01:41.314Z",
+   "addedBy": "Katie Lee",
+   "tags": [],
+   "comments": [],
+   "trashedAt": null
+  },
+  {
+   "id": "i_musism7l0ffuli",
+   "folder": null,
+   "title": "",
+   "w": 992,
+   "h": 1324,
+   "bytes": 661439,
+   "thumbBytes": 51812,
+   "ext": "png",
+   "thumbExt": "webp",
+   "originalName": "Screenshot 2026-04-04 at 12.50.39 AM.png",
+   "addedAt": "2026-10-03T15:01:41.361Z",
+   "addedBy": "Katie Lee",
+   "tags": [],
+   "comments": [],
+   "trashedAt": null
+  },
+  {
+   "id": "i_musism8wvr108h",
+   "folder": null,
+   "title": "",
+   "w": 1024,
+   "h": 1024,
+   "bytes": 833822,
+   "thumbBytes": 49138,
+   "ext": "png",
+   "thumbExt": "webp",
+   "originalName": "Yu_Chef.png",
+   "addedAt": "2026-10-03T15:01:41.408Z",
+   "addedBy": "Katie Lee",
+   "tags": [],
+   "comments": [],
+   "trashedAt": null
+  },
+  {
    "id": "i_musis7udpc80dj",
    "folder": null,
    "title": "",
@@ -478,5 +529,5 @@
    "trashedAt": null
   }
  ],
- "updatedAt": "2026-10-03T15:01:24.810Z"
+ "updatedAt": "2026-10-03T15:01:43.526Z"
 }
