@@ -9,7 +9,7 @@ import { Vault } from './vault.js';
 import { Moodboard } from './moodboard.js';
 
 // Must match <meta name="app-version"> in index.html (tools/bump-version.mjs updates both).
-const APP_VERSION = '20261003-153449';
+const APP_VERSION = '20261003-153907';
 
 const $ = sel => document.querySelector(sel);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -701,9 +701,9 @@ function renderLightboxSimilar() {
     if (!smart.enabled) {
       html = `<button class="link" data-sim="ai-on">${icon('copy')} Find similar photos and duplicates</button>`;
     } else if (smart.active && smart.emb.has(img.id)) {
-      const { DUPLICATE, NEAR_DUPLICATE } = smart.lib;
+      const { SURE_COPY, DUPLICATE, NEAR_DUPLICATE } = smart.lib;
       const list = smart.similar(img, state.album) || [];
-      const dups = list.filter(s => s.score >= DUPLICATE);
+      const dups = list.filter(s => s.score >= SURE_COPY);
       html = `<h2 class="lb-h">Similar photos <span>${list.length ? `(${list.length})` : ''}</span></h2>`;
       if (!list.length) html += '<p class="muted small">Nothing similar yet.</p>';
       else {
@@ -712,7 +712,7 @@ function renderLightboxSimilar() {
             <button class="btn primary sm" data-sim="merge">Remove ${dups.length === 1 ? 'it' : 'them'}</button></div>`;
         }
         html += `<div class="sim-strip">${list.map(s => {
-          const label = s.score >= DUPLICATE ? 'Duplicate' : s.score >= NEAR_DUPLICATE ? 'Near-duplicate' : `${Math.round(s.score * 100)}% alike`;
+          const label = s.score >= SURE_COPY ? 'Duplicate' : s.score >= DUPLICATE ? 'Likely copy' : s.score >= NEAR_DUPLICATE ? 'Near-duplicate' : `${Math.round(s.score * 100)}% alike`;
           return `<div class="sim" data-id="${esc(s.img.id)}"><img alt="" title="${esc(s.img.title || s.img.originalName || '')}">
             <span class="sim-score${s.score >= NEAR_DUPLICATE ? ' dup' : ''}">${label}</span>
             <button class="sim-x" data-sim="trash" title="Move to Trash" aria-label="Move to Trash">${icon('trash')}</button></div>`;
@@ -751,8 +751,9 @@ function dupeGroups() {
     const kv = smart.emb.get(keep.id);
     const others = members.filter(m => m !== keep).map(img => {
       const score = smart.lib.dot(kv, smart.emb.get(img.id));
-      const duplicate = score >= smart.lib.DUPLICATE;
-      return { img, score, duplicate, remove: dupeChoice.has(img.id) ? dupeChoice.get(img.id) : duplicate };
+      const duplicate = score >= smart.lib.SURE_COPY;
+      const label = duplicate ? 'Copy' : score >= smart.lib.DUPLICATE ? 'Likely copy' : score >= smart.lib.NEAR_DUPLICATE ? 'Near-duplicate' : 'Similar';
+      return { img, score, duplicate, label, remove: dupeChoice.has(img.id) ? dupeChoice.get(img.id) : duplicate };
     });
     return { key, keep, others };
   });
@@ -776,7 +777,7 @@ function renderDupes() {
     if (!groups.length) {
       html = card(`<h2>No duplicates found</h2><p class="muted">None of your ${plural(state.album.images.filter(i => !i.trashedAt).length, 'photo')} look like copies of each other.</p>`);
     } else {
-      html = `<div class="dup-head"><p>${plural(groups.length, 'group')} of look-alike photos. Copies are ticked; near-duplicates (heavier crops or edits) are left for you to decide. Removed copies go to the Trash, and their tags and comments move to the photo you keep.</p>
+      html = `<div class="dup-head"><p>${plural(groups.length, 'group')} of look-alike photos. Only near-certain copies are ticked; likely copies and near-duplicates (crops, edits, or very similar screenshots) are left for you to decide. Removed copies go to the Trash, and their tags and comments move to the photo you keep.</p>
         <button class="btn primary" data-d="remove-all" ${selected ? '' : 'disabled'}>Remove ${selected} ticked ${selected === 1 ? 'copy' : 'copies'}</button></div>` +
         groups.map(g => {
           const n = g.others.filter(o => o.remove).length;
@@ -792,7 +793,7 @@ function renderDupes() {
             ${tile(g.keep, { cls: 'keep', html: '<span class="dup-badge">Keep</span>' })}
             ${g.others.map(o => tile(o.img, {
               cls: o.remove ? 'checked' : '',
-              html: `<span class="dup-score${o.duplicate ? ' dup' : ''}">${o.duplicate ? 'Copy' : 'Near-duplicate'} · ${Math.round(o.score * 100)}%</span>
+              html: `<span class="dup-score${o.duplicate ? ' dup' : ''}">${o.label} · ${Math.round(o.score * 100)}%</span>
                 <label class="dup-check"><input type="checkbox" data-d="toggle" ${o.remove ? 'checked' : ''}> Remove</label>
                 <button class="link small" data-d="keep">Keep this one instead</button>`,
             })).join('')}
@@ -1758,7 +1759,7 @@ function bindLightbox() {
     if (!img) return;
     if (e.target.closest('[data-sim="ai-on"]')) return smart.enable(state.album);
     if (e.target.closest('[data-sim="merge"]')) {
-      const ids = (smart.similar(img, state.album) || []).filter(s => s.score >= smart.lib.DUPLICATE).map(s => s.img.id);
+      const ids = (smart.similar(img, state.album) || []).filter(s => s.score >= smart.lib.SURE_COPY).map(s => s.img.id);
       return removeCopies(img.id, ids);
     }
     const tile = e.target.closest('.sim');

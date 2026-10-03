@@ -99,8 +99,11 @@ export function suggestTags(img, album, emb, max = 8) {
 // ---- similar & duplicates -----------------------------------------------------
 
 // Tuned on resized / recompressed / cropped copies of sample art: copies score
-// 0.93+, while the most alike *different* pictures scored 0.83.
-export const DUPLICATE = 0.92;      // same picture (resized, re-saved, lightly cropped)
+// 0.93+, while the most alike *different* pictures scored 0.83. Different
+// screenshots of the same app can reach ~0.93 too, so only 0.95+ is treated as
+// a sure copy (pre-ticked for removal); 0.92-0.95 is shown but left unticked.
+export const SURE_COPY = 0.95;      // re-uploaded, re-saved or resized copy
+export const DUPLICATE = 0.92;      // likely a copy
 export const NEAR_DUPLICATE = 0.86; // probably the same picture, heavily cropped or edited
 const SIMILAR_MIN = 0.45;
 
@@ -122,7 +125,9 @@ function keeperOf(imgs, album) {
   return [...imgs].sort((a, b) => worth(b) - worth(a) || b.w * b.h - a.w * a.h || String(a.addedAt).localeCompare(String(b.addedAt)))[0];
 }
 
-// Groups of copies: [{ keep, others: [{ img, score, duplicate }] }], biggest first.
+// Groups of look-alikes: [{ keep, others: [{ img, score, duplicate }] }], biggest
+// first. `duplicate` = sure copy (pre-ticked). Members can be linked through a
+// third photo, so some may score lower against the kept one.
 export function duplicateGroups(album, emb) {
   const photos = live(album).filter(i => emb.has(i.id));
   const parent = photos.map((_, i) => i);
@@ -141,7 +146,7 @@ export function duplicateGroups(album, emb) {
       const keep = keeperOf(g, album);
       const kv = emb.get(keep.id);
       const others = g.filter(i => i !== keep)
-        .map(img => { const score = dot(kv, emb.get(img.id)); return { img, score, duplicate: score >= DUPLICATE }; })
+        .map(img => { const score = dot(kv, emb.get(img.id)); return { img, score, duplicate: score >= SURE_COPY }; })
         .sort((a, b) => b.score - a.score);
       return { keep, others };
     })
