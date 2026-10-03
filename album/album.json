@@ -3,6 +3,21 @@
  "folders": [],
  "images": [
   {
+   "id": "i_musfugotcjxkiw",
+   "folder": null,
+   "title": "",
+   "w": 758,
+   "h": 1742,
+   "bytes": 278802,
+   "thumbBytes": 119686,
+   "ext": "webp",
+   "thumbExt": "webp",
+   "originalName": "Screenshot 2026-01-19 at 2.11.40 AM.png",
+   "addedAt": "2026-10-03T13:39:08.669Z",
+   "addedBy": "Katie Lee",
+   "comments": []
+  },
+  {
    "id": "i_musfq9s7mfygsp",
    "folder": null,
    "title": "",
@@ -18,5 +33,5 @@
    "comments": []
   }
  ],
- "updatedAt": "2026-10-03T13:35:54.235Z"
+ "updatedAt": "2026-10-03T13:39:09.768Z"
 }
