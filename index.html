@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Artist Album</title>
+  <meta name="description" content="A personal image board stored on GitHub.">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='3' width='11' height='15' rx='3' fill='%23d9482b'/%3E%3Crect x='18' y='3' width='11' height='9' rx='3' fill='%23e8a33d'/%3E%3Crect x='3' y='21' width='11' height='8' rx='3' fill='%233d7be8'/%3E%3Crect x='18' y='15' width='11' height='14' rx='3' fill='%2332a37f'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/style.css">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="2"/><rect x="14" y="3" width="7" height="5" rx="2"/><rect x="14" y="12" width="7" height="9" rx="2"/><rect x="3" y="16" width="7" height="5" rx="2"/></symbol>
+    <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.7 4H7.3a2 2 0 0 0-1.8 1.1z"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.8-1.2A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+    <symbol id="i-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15.5 7.5l3 3L22 7l-3-3"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-comment" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+    <symbol id="i-select" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="m8 12 3 3 5-6"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></symbol>
+  </svg>
+
+  <div class="app" id="app">
+    <aside class="sidebar" id="sidebar" aria-label="Folders">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <span>Artist Album</span>
+      </div>
+      <nav class="nav">
+        <button class="nav-item" data-view="all"><svg class="ic"><use href="#i-grid"/></svg><span class="name">All photos</span><span class="count"></span></button>
+        <button class="nav-item" data-view="unsorted"><svg class="ic"><use href="#i-inbox"/></svg><span class="name">Unsorted</span><span class="count"></span></button>
+      </nav>
+      <div class="folders-head">
+        <span>Folders</span>
+        <button class="icon-btn sm" id="newFolderBtn" aria-label="New folder" title="New folder"><svg class="ic"><use href="#i-plus"/></svg></button>
+      </div>
+      <ul class="folder-list" id="folderList"></ul>
+      <p class="folder-hint" id="folderHint">Make folders with <b>+</b>, then drag photos onto them.</p>
+      <div class="sidebar-foot">
+        <div class="storage" id="storage" title="GitHub recommends keeping a repository under 1 GB">
+          <div class="storage-bar"><span id="storageFill"></span></div>
+          <div class="storage-label" id="storageLabel"></div>
+        </div>
+        <button class="access-btn" id="accessBtn">
+          <svg class="ic"><use href="#i-key"/></svg>
+          <span><strong>Edit access</strong><small id="accessState">View only</small></span>
+        </button>
+      </div>
+    </aside>
+    <div class="scrim" id="scrim"></div>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="icon-btn menu-btn" id="menuBtn" aria-label="Show folders"><svg class="ic"><use href="#i-menu"/></svg></button>
+        <div class="view-title">
+          <h1 id="viewTitle">All photos</h1>
+          <span class="view-count" id="viewCount"></span>
+          <button class="icon-btn sm" id="renameFolderBtn" hidden aria-label="Rename folder" title="Rename folder"><svg class="ic"><use href="#i-edit"/></svg></button>
+          <button class="icon-btn sm" id="deleteFolderBtn" hidden aria-label="Delete folder" title="Delete folder"><svg class="ic"><use href="#i-trash"/></svg></button>
+        </div>
+        <span class="save-status" id="saveStatus" aria-live="polite"></span>
+        <label class="search">
+          <svg class="ic"><use href="#i-search"/></svg>
+          <input id="search" type="search" placeholder="Search titles &amp; comments" autocomplete="off">
+        </label>
+        <button class="btn ghost" id="selectBtn" title="Select photos"><svg class="ic"><use href="#i-select"/></svg><span>Select</span></button>
+        <button class="btn primary" id="addBtn"><svg class="ic"><use href="#i-plus"/></svg><span>Add photos</span></button>
+        <input type="file" id="fileInput" accept="image/*,.heic,.heif" multiple hidden>
+      </header>
+
+      <section class="board">
+        <div class="masonry" id="grid"></div>
+        <div class="sentinel" id="sentinel"></div>
+        <div class="empty" id="empty" hidden></div>
+      </section>
+    </main>
+  </div>
+
+  <div class="selection-bar" id="selectionBar" hidden>
+    <strong id="selCount"></strong>
+    <select id="selMove" aria-label="Move selected photos"></select>
+    <button class="btn danger-ghost sm" id="selDelete"><svg class="ic"><use href="#i-trash"/></svg>Delete</button>
+    <button class="btn ghost sm" id="selClear">Done</button>
+  </div>
+
+  <div class="drop-overlay" id="dropOverlay" hidden>
+    <div class="drop-card">
+      <svg class="ic xl"><use href="#i-image"/></svg>
+      <p>Drop to add to <strong id="dropTarget">All photos</strong></p>
+      <small>Big files are shrunk automatically before upload</small>
+    </div>
+  </div>
+
+  <div class="upload-panel" id="uploadPanel" hidden>
+    <div class="upload-head">
+      <strong id="uploadTitle"></strong>
+      <button class="icon-btn sm" id="uploadClose" aria-label="Hide"><svg class="ic"><use href="#i-close"/></svg></button>
+    </div>
+    <div class="upload-progress"><span id="uploadBar"></span></div>
+    <ul class="upload-list" id="uploadList"></ul>
+  </div>
+
+  <div class="lightbox" id="lightbox" hidden role="dialog" aria-modal="true" aria-label="Photo">
+    <div class="lb-stage" id="lbStage">
+      <button class="lb-nav prev" id="lbPrev" aria-label="Previous photo"><svg class="ic"><use href="#i-left"/></svg></button>
+      <img id="lbImg" alt="">
+      <button class="lb-nav next" id="lbNext" aria-label="Next photo"><svg class="ic"><use href="#i-right"/></svg></button>
+    </div>
+    <aside class="lb-panel" id="lbPanel">
+      <div class="lb-top">
+        <span class="lb-position" id="lbPosition"></span>
+        <button class="icon-btn" id="lbClose" aria-label="Close"><svg class="ic"><use href="#i-close"/></svg></button>
+      </div>
+      <input class="lb-title" id="lbTitle" placeholder="Add a title" maxlength="200" aria-label="Title">
+      <p class="lb-meta" id="lbMeta"></p>
+      <label class="field inline">
+        <svg class="ic"><use href="#i-folder"/></svg>
+        <select id="lbFolder" aria-label="Folder"></select>
+      </label>
+      <div class="lb-actions">
+        <button class="btn ghost sm" id="lbDownload"><svg class="ic"><use href="#i-download"/></svg>Download</button>
+        <button class="btn ghost sm" id="lbLink"><svg class="ic"><use href="#i-link"/></svg>Copy link</button>
+        <button class="btn danger-ghost sm edit-only" id="lbDelete"><svg class="ic"><use href="#i-trash"/></svg>Delete</button>
+      </div>
+      <h2 class="lb-h">Comments <span id="lbCount"></span></h2>
+      <ul class="comments" id="lbComments"></ul>
+      <form class="comment-form edit-only" id="commentForm">
+        <textarea id="commentText" rows="3" placeholder="Add a comment…" aria-label="Comment"></textarea>
+        <div class="comment-form-foot">
+          <span class="muted" id="commentAs"></span>
+          <button class="btn primary sm" type="submit">Post</button>
+        </div>
+      </form>
+      <p class="locked view-only">Viewing only. <button class="link" data-open-settings>Unlock editing</button> to comment.</p>
+    </aside>
+  </div>
+
+  <dialog class="dialog" id="settings">
+    <form method="dialog" class="dialog-body" id="settingsForm">
+      <div class="dialog-head">
+        <h2>Edit access</h2>
+        <button class="icon-btn" value="close" formnovalidate aria-label="Close"><svg class="ic"><use href="#i-close"/></svg></button>
+      </div>
+      <p class="muted">Anyone with the link can look at this album. To add photos, move them, rename folders or comment, this browser needs a GitHub key. The key stays in this browser only.</p>
+      <div class="key-state" id="keyState"></div>
+      <label class="field">Your name <small>(shown on your comments)</small>
+        <input id="setName" autocomplete="name" maxlength="60">
+      </label>
+      <label class="field">GitHub key
+        <input id="setToken" type="password" placeholder="github_pat_…" autocomplete="off" spellcheck="false">
+      </label>
+      <p class="form-msg" id="settingsMsg" aria-live="polite"></p>
+      <div class="dialog-actions">
+        <button type="button" class="btn ghost" id="forgetKey">Remove key</button>
+        <button type="button" class="btn primary" id="saveKey">Save</button>
+      </div>
+      <details>
+        <summary>How to get a key (about a minute)</summary>
+        <ol class="steps">
+          <li>Open <a id="tokenLink" target="_blank" rel="noopener">GitHub → new fine-grained token</a> (sign in as the album owner).</li>
+          <li>Name it something like <em>Artist Album</em> and pick an expiration (for example 1 year).</li>
+          <li>Under <b>Repository access</b> choose <b>Only select repositories</b> → <b id="repoName"></b>.</li>
+          <li>Under <b>Permissions → Repository permissions</b>, set <b>Contents</b> to <b>Read and write</b>.</li>
+          <li>Click <b>Generate token</b>, copy it, and paste it above.</li>
+        </ol>
+      </details>
+      <details>
+        <summary>Let someone else edit</summary>
+        <p class="muted">Send them an invite link. It contains your key, so <b>anyone who has the link can edit or delete photos</b>. Only share it with people you trust. You can cancel all invites at any time by deleting the token on GitHub.</p>
+        <button type="button" class="btn ghost" id="copyInvite"><svg class="ic"><use href="#i-link"/></svg>Copy invite link</button>
+        <p class="muted small">Safer option: add them as a collaborator on the GitHub repo, so they can create their own key.</p>
+      </details>
+    </form>
+  </dialog>
+
+  <dialog class="dialog small" id="askDialog">
+    <form method="dialog" class="dialog-body">
+      <h2 id="askTitle"></h2>
+      <p class="muted" id="askText"></p>
+      <input id="askInput" class="text-input" maxlength="80">
+      <div class="dialog-actions">
+        <button class="btn primary" value="ok" id="askOk">OK</button>
+        <button type="button" class="btn ghost" id="askCancel">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+</body>
+</html>
