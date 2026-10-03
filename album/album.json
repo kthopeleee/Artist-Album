@@ -5,6 +5,11 @@
    "id": "f_musih4ba3ocmnm",
    "name": "Sketches",
    "createdAt": "2026-10-03T14:52:45.648Z"
+  },
+  {
+   "id": "f_musih85kw2yozv",
+   "name": "Manga",
+   "createdAt": "2026-10-03T14:52:50.508Z"
   }
  ],
  "images": [
@@ -43,5 +48,5 @@
    "trashedAt": null
   }
  ],
- "updatedAt": "2026-10-03T14:52:45.648Z"
+ "updatedAt": "2026-10-03T14:52:50.508Z"
 }
