@@ -19,6 +19,23 @@
  ],
  "images": [
   {
+   "id": "i_musis7udpc80dj",
+   "folder": null,
+   "title": "",
+   "w": 1400,
+   "h": 700,
+   "bytes": 76722,
+   "thumbBytes": 21750,
+   "ext": "webp",
+   "thumbExt": "webp",
+   "originalName": "Nightwing-Is-Jon-Kents-Hero.avif",
+   "addedAt": "2026-10-03T15:01:22.741Z",
+   "addedBy": "Katie Lee",
+   "tags": [],
+   "comments": [],
+   "trashedAt": null
+  },
+  {
    "id": "i_musij0qbkjg15y",
    "folder": "f_musih85kw2yozv",
    "title": "",
@@ -461,5 +478,5 @@
    "trashedAt": null
   }
  ],
- "updatedAt": "2026-10-03T14:59:52.864Z"
+ "updatedAt": "2026-10-03T15:01:24.810Z"
 }
