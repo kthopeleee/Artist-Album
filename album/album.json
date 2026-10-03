@@ -32,7 +32,15 @@
    "addedAt": "2026-10-03T15:14:47.881Z",
    "addedBy": "Katie Lee",
    "tags": [],
-   "comments": [],
+   "comments": [
+    {
+     "id": "c_musjcs084dme40",
+     "author": "Katie Lee",
+     "text": "Creating Hidden Endings",
+     "at": "2026-10-03T15:17:21.992Z",
+     "editedAt": null
+    }
+   ],
    "trashedAt": null
   },
   {
@@ -2365,5 +2373,5 @@
    "trashedAt": null
   }
  ],
- "updatedAt": "2026-10-03T15:14:49.381Z"
+ "updatedAt": "2026-10-03T15:17:22.601Z"
 }
