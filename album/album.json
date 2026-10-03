@@ -19,6 +19,23 @@
  ],
  "images": [
   {
+   "id": "i_musj8urmffv79d",
+   "folder": null,
+   "title": "",
+   "w": 808,
+   "h": 1420,
+   "bytes": 1704866,
+   "thumbBytes": 47376,
+   "ext": "png",
+   "thumbExt": "webp",
+   "originalName": "Screenshot 2025-12-15 at 8.15.36 AM.png",
+   "addedAt": "2026-10-03T15:14:18.946Z",
+   "addedBy": "Katie Lee",
+   "tags": [],
+   "comments": [],
+   "trashedAt": null
+  },
+  {
    "id": "i_musj7je6l2cm3z",
    "folder": null,
    "title": "",
@@ -2280,5 +2297,5 @@
    "trashedAt": null
   }
  ],
- "updatedAt": "2026-10-03T15:13:32.962Z"
+ "updatedAt": "2026-10-03T15:14:20.850Z"
 }
